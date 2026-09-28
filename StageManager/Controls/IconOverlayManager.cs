@@ -17,16 +17,16 @@ namespace StageManager.Controls
 {
     internal sealed class IconOverlayManager : IDisposable
     {
-        private const double IconSize = 30;
+        private const double IconSize = 24;
         private const double IconGap = 4;
-        private const double OverlapOffset = -14;
+        private const double OverlapOffset = -8;
         private const double SmallSceneLeftShift = -8;
-        private const double BottomOverlap = 15;
-        private const double SceneBottomMargin = 28;
+        private const double BottomOverlap = 12;
+        private const double SceneBottomMargin = 22;
         private const int CompactThreshold = 2;
 
         // Filter-view layout (active when HighlightedProcessKey != null).
-        private const double FilteredIconSize = 22;
+        private const double FilteredIconSize = 18;
         private const double FilteredBottomOverlap = 11;
         private const double LabelFontSize = 10;
         private const double LabelTopMargin = 2;

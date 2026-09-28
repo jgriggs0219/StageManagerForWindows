@@ -147,7 +147,7 @@
                                 Background="Transparent"
                                 Width="190"
                                 HorizontalAlignment="Left"
-                                Padding="2,4,0,18"
+                                Padding="0,6,0,12"
                                 MouseRightButtonUp="GroupHeader_RightClick">
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -159,17 +159,31 @@
                                     </Style>
                                 </Border.Style>
                                 <StackPanel>
-                                    <Border Height="1" Background="#55FFFFFF" Margin="0,0,0,12" />
-                                    <emoji:TextBlock
-                                        Text="{Binding Name}"
-                                        Foreground="#FFFFFFFF"
-                                        FontSize="13"
-                                        FontWeight="Bold"
-                                        TextTrimming="CharacterEllipsis">
-                                        <emoji:TextBlock.Effect>
-                                            <DropShadowEffect BlurRadius="6" ShadowDepth="0" Opacity="0.9" Color="Black" />
-                                        </emoji:TextBlock.Effect>
-                                    </emoji:TextBlock>
+                                    <!-- Bright accent divider, then the name in a pill, so each
+                                         section reads as its own block at a glance. -->
+                                    <Border Height="2" CornerRadius="1" Margin="0,2,20,8">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#FF4C9BFF" Offset="0" />
+                                                <GradientStop Color="#004C9BFF" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+                                    <Border
+                                        HorizontalAlignment="Left"
+                                        CornerRadius="10"
+                                        Padding="9,3,11,3"
+                                        Background="#CC1C2433"
+                                        BorderBrush="#994C9BFF"
+                                        BorderThickness="1">
+                                        <emoji:TextBlock
+                                            Text="{Binding Name}"
+                                            Foreground="#FFFFFFFF"
+                                            FontSize="12"
+                                            FontWeight="SemiBold"
+                                            TextTrimming="CharacterEllipsis"
+                                            MaxWidth="150" />
+                                    </Border>
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
@@ -178,7 +192,7 @@
             </ItemsControl.GroupStyle>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <Grid Margin="0,0,0,42"
+                    <Grid Margin="0,0,0,22"
                         Visibility="{Binding Visibility}"
                         Style="{StaticResource SceneOpacity}"
                         MouseRightButtonUp="SceneTile_RightClick">
