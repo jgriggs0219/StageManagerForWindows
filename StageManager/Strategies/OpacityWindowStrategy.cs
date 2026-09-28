@@ -48,6 +48,21 @@ namespace StageManager.Strategies
 		/// the real window to the cursor) leaves a stale entry that Show would restore. Callers that
 		/// move a parked window on purpose call this so the next Hide re-reads the live rect.
 		/// </summary>
+		/// <summary>
+		/// Replaces the saved on-screen position of a parked window, so Show brings it back
+		/// somewhere new. No-op for windows that aren't parked.
+		/// </summary>
+		public static bool TrySetOriginalPosition(IntPtr hWnd, int x, int y)
+		{
+			lock (_globalLock)
+			{
+				if (!_originalPositions.ContainsKey(hWnd))
+					return false;
+				_originalPositions[hWnd] = (x, y);
+				return true;
+			}
+		}
+
 		public static void ForgetOriginalPosition(IntPtr hWnd)
 		{
 			lock (_globalLock)

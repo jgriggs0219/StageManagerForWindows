@@ -36,6 +36,9 @@ namespace StageManager
 		/// <summary>Raised on the UI thread after a virtual desktop switch was handled.</summary>
 		public event EventHandler? VirtualDesktopChanged;
 
+		/// <summary>Raised on the UI thread once a desktop switch has finished animating.</summary>
+		public event EventHandler? VirtualDesktopSettled;
+
 		/// <summary>
 		/// When set, focus-triggered scene switches use this delegate instead of calling SwitchTo directly.
 		/// MainWindow sets this to inject the transition animation.
@@ -796,6 +799,7 @@ namespace StageManager
 						await Task.Delay(50);
 
 					AdoptWindowsOnCurrentDesktop();
+					VirtualDesktopSettled?.Invoke(this, EventArgs.Empty);
 					var fg = Win32.GetForegroundWindow();
 					Scene[] scenes;
 					lock (_scenesLock)
@@ -1298,6 +1302,9 @@ namespace StageManager
 		public void RestoreWindow(IWindow window) => WindowStrategy.Show(window);
 
 		public bool IsDesktopView => _current is null;
+
+		public IWindow[] GetSceneableWindowsOnCurrentDesktop() =>
+			GetSceneableWindows().ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle)).ToArray();
 
 		public IEnumerable<IWindow> GetCurrentWindows() => _current?.Windows ?? GetSceneableWindows();
 

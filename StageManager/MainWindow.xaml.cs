@@ -155,6 +155,7 @@ namespace StageManager
 
 			_iconOverlay.OnIconClicked = ToggleAppFilter;
 			_iconOverlay.OnIconSwitch = model => SwitchSceneCommand.Execute(model);
+			_iconOverlay.OnIconMenu = ShowSceneMenu;
 		}
 
 		private void ToggleAppFilter(string processKey)
@@ -391,6 +392,12 @@ namespace StageManager
 			SceneManager.SceneChanged += SceneManager_SceneChanged;
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
 			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); RefreshIconOverlay(); };
+			SceneManager.VirtualDesktopSettled += async (_, _) =>
+			{
+				// Let the uncloak finish, then re-grab previews captured mid-slide.
+				await Task.Delay(120);
+				StageManager.Composition.CaptureSession.RestartActive();
+			};
 
 			// Explorer updates the current desktop in the registry the instant a switch starts.
 			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(75) };
@@ -1830,6 +1837,18 @@ namespace StageManager
 
 		public ObservableCollection<DesktopGroupModel> OtherDesktops { get; } = new ObservableCollection<DesktopGroupModel>();
 
+		private string _currentDesktopName = "";
+		public string CurrentDesktopName
+		{
+			get => _currentDesktopName;
+			private set
+			{
+				if (_currentDesktopName == value) return;
+				_currentDesktopName = value;
+				RaisePropertyChanged();
+			}
+		}
+
 		private string _otherDesktopsSignature = "";
 		private readonly Dictionary<IntPtr, ImageSource?> _desktopIconCache = new Dictionary<IntPtr, ImageSource?>();
 
@@ -1843,6 +1862,9 @@ namespace StageManager
 				return;
 
 			var desktops = VirtualDesktop.GetDesktops();
+			var currentId = VirtualDesktop.CurrentDesktopId;
+			// Only label desktops when there is more than one — a lone desktop needs no name.
+			CurrentDesktopName = desktops.Count > 1 ? desktops.FirstOrDefault(d => d.Id == currentId)?.Name ?? "" : "";
 			var groups = SceneManager.GetOtherDesktopApps();
 			var ordered = desktops
 				.Select(d => (Info: d, Apps: groups.FirstOrDefault(g => g.Desktop == d.Id).Apps))
@@ -1898,6 +1920,104 @@ namespace StageManager
 				Win32.ShowWindow(handle, Win32.SW.SW_RESTORE);
 			Win32Helper.ForceForegroundWindow(handle);
 			e.Handled = true;
+		}
+
+		private void SceneTile_RightClick(object sender, MouseButtonEventArgs e)
+		{
+			if (sender is FrameworkElement { DataContext: SceneModel model })
+			{
+				e.Handled = true;
+				ShowSceneMenu(model);
+			}
+		}
+
+		/// <summary>Right-click menu for a sidebar tile (also opened from its app icon).</summary>
+		private void ShowSceneMenu(SceneModel model)
+		{
+			var menu = new ContextMenu();
+			if (TryFindResource("TrayContextMenuStyle") is Style menuStyle)
+				menu.Style = menuStyle;
+			var itemStyle = TryFindResource("TrayMenuItemStyle") as Style;
+			var sepStyle = TryFindResource("TrayMenuSeparatorStyle") as Style;
+
+			MenuItem Item(string header, Action action)
+			{
+				var mi = new MenuItem { Header = header };
+				if (itemStyle is not null) mi.Style = itemStyle;
+				mi.Click += (_, _) => action();
+				return mi;
+			}
+
+			menu.Items.Add(Item("Make all apps here this size (stacked)", () => StackAllLike(model)));
+			menu.Items.Add(Item("Show only this app", () =>
+			{
+				var key = model.Windows.FirstOrDefault()?.Window?.ProcessFileName;
+				if (key is not null) ToggleAppFilter(key);
+			}));
+			menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
+			menu.Items.Add(Item(model.Windows.Count > 1 ? $"Close app ({model.Windows.Count} windows)" : "Close app", () => CloseScene(model)));
+
+			menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+			menu.IsOpen = true;
+		}
+
+		/// <summary>
+		/// Asks every window of the scene to close, exactly like clicking its X — apps can
+		/// still prompt to save. Stage Manager drops the tile when the windows go away.
+		/// </summary>
+		private void CloseScene(SceneModel model)
+		{
+			const uint WM_CLOSE = 0x0010;
+			foreach (var w in model.Windows.ToArray())
+			{
+				Log.Action($"Close app: '{w.Window?.Title}'");
+				Win32.PostMessage(w.Handle, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+			}
+		}
+
+		/// <summary>
+		/// Gives every app window on the current desktop the size of this scene's window,
+		/// all centred on the stage (the work area right of the sidebar) — one neat stack,
+		/// like macOS. Parked windows are resized in place and will come back to the new spot.
+		/// </summary>
+		private void StackAllLike(SceneModel model)
+		{
+			var reference = model.Windows.FirstOrDefault()?.Handle ?? IntPtr.Zero;
+			var r = new Win32.Rect();
+			if (reference == IntPtr.Zero || !Win32.GetWindowRect(reference, ref r))
+				return;
+			int w = r.Width, h = r.Height;
+
+			var wa = System.Windows.Forms.Screen.FromHandle(_thisHandle).WorkingArea;
+			int sidebar = (int)Math.Round(ActualWidth * Dpi.X);
+			int stageLeft = wa.Left + sidebar;
+			int stageWidth = Math.Max(1, wa.Right - stageLeft);
+			w = Math.Min(w, stageWidth);
+			h = Math.Min(h, wa.Height);
+			int x = stageLeft + (stageWidth - w) / 2;
+			int y = wa.Top + (wa.Height - h) / 2;
+			Log.Action($"Stack all like '{model.Title}': {w}x{h} at ({x},{y})");
+
+			foreach (var win in SceneManager.GetSceneableWindowsOnCurrentDesktop())
+			{
+				var hwnd = win.Handle;
+				if (Win32.IsIconic(hwnd))
+					continue;
+				if (Win32.IsZoomed(hwnd))
+					Win32.ShowWindow(hwnd, Win32.SW.SW_RESTORE);
+
+				if (StageManager.Strategies.OpacityWindowStrategy.TrySetOriginalPosition(hwnd, x, y))
+				{
+					// Parked: resize where it is; Show will bring it back to (x, y).
+					Win32.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, w, h,
+						Win32.SetWindowPosFlags.IgnoreMove | Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate);
+				}
+				else
+				{
+					Win32.SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h,
+						Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate);
+				}
+			}
 		}
 
 		private void RefreshSettingsMenuChecks()

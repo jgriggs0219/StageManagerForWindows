@@ -84,8 +84,28 @@ namespace StageManager.Composition
 
 		public event EventHandler? TargetClosed;
 
+		// Every live session, so a virtual desktop switch can restart them all (see RestartActive).
+		private static readonly System.Collections.Concurrent.ConcurrentDictionary<CaptureSession, byte> _live = new();
+
+		/// <summary>
+		/// Restarts every running (unpaused) capture. A capture (re)started while its window
+		/// is still cloaked by a desktop switch gets an empty first frame, and a window that
+		/// doesn't repaint never sends another — the tile stayed blank. Call once the switch
+		/// has settled. UI thread.
+		/// </summary>
+		public static void RestartActive()
+		{
+			foreach (var s in _live.Keys)
+			{
+				if (s._disposed || s._paused) continue;
+				s.Pause();
+				s.Resume();
+			}
+		}
+
 		public CaptureSession(IntPtr hwnd, Compositor compositor, D3DDeviceHolder devices)
 		{
+			_live[this] = 0;
 			_hwnd = hwnd;
 			_compositor = compositor;
 			_devices = devices;
@@ -541,6 +561,7 @@ namespace StageManager.Composition
 		{
 			if (_disposed) return;
 			_disposed = true;
+			_live.TryRemove(this, out _);
 
 			var sem = _hwndLocks.TryGetValue(_hwnd, out var s) ? s : null;
 			// Bounded, and we proceed even on timeout: _disposed is already set and

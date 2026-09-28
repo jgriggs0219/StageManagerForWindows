@@ -55,6 +55,9 @@ namespace StageManager.Controls
         /// <summary>Left click on an icon: switch to that icon's scene.</summary>
         public Action<SceneModel>? OnIconSwitch { get; set; }
 
+        /// <summary>Right click on an icon: open the tile's context menu.</summary>
+        public Action<SceneModel>? OnIconMenu { get; set; }
+
         // Setter side effect: while filter is active, freeze the icon strip — no hover, no click,
         // no cursor change. IsHitTestVisible=false silences MouseEnter/Leave/LeftButtonUp and
         // Cursors.Hand all at once. Also defeats the per-frame WS_EX_TRANSPARENT toggle in
@@ -262,8 +265,8 @@ namespace StageManager.Controls
             image.MouseRightButtonUp += (_, e) =>
             {
                 e.Handled = true;
-                Log.Info("FILTER", $"icon right-clicked (filter): scene='{sceneTitle}' processKey='{processKey}' iconIndex={idx} window='{windowTitle}'");
-                OnIconClicked?.Invoke(processKey);
+                Log.Info("FILTER", $"icon right-clicked (menu): scene='{sceneTitle}'");
+                OnIconMenu?.Invoke(scene);
             };
             image.MouseEnter += (_, _) => AnimateScale(hover, 1.15, HoverDuration);
             image.MouseLeave += (_, _) => AnimateScale(hover, 1.0, HoverDuration);

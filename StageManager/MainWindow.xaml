@@ -125,6 +125,18 @@
     </Window.Resources>
     <StackPanel
         VerticalAlignment="Center">
+        <!-- Current virtual desktop name, above its tiles (other desktops are labelled below). -->
+        <TextBlock
+            Text="{Binding CurrentDesktopName}"
+            HorizontalAlignment="Left"
+            Margin="24,0,0,10"
+            Foreground="#FFFFFFFF"
+            FontSize="13"
+            FontWeight="Bold">
+            <TextBlock.Effect>
+                <DropShadowEffect BlurRadius="6" ShadowDepth="0" Opacity="0.9" Color="Black" />
+            </TextBlock.Effect>
+        </TextBlock>
         <ItemsControl
             Name="scenesControl"
             HorizontalAlignment="Left"
@@ -138,7 +150,8 @@
                 <DataTemplate>
                     <Grid Margin="0,0,0,28"
                         Visibility="{Binding Visibility}"
-                        Style="{StaticResource SceneOpacity}">
+                        Style="{StaticResource SceneOpacity}"
+                        MouseRightButtonUp="SceneTile_RightClick">
                         <i:Interaction.Triggers>
                             <i:EventTrigger
                                 EventName="MouseLeftButtonUp">
