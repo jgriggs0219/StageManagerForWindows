@@ -120,6 +120,7 @@ namespace StageManager
 			WindowsManager.WindowUpdated += WindowsManager_WindowUpdated;
 			WindowsManager.WindowDestroyed += WindowsManager_WindowDestroyed;
 			WindowsManager.DesktopShortClick += WindowsManager_DesktopShortClick;
+			WindowsManager.ShellCloakChanged += WindowsManager_ShellCloakChanged;
 
 			await WindowsManager.Start();
 
@@ -160,18 +161,13 @@ namespace StageManager
 			}
 
 			// A virtual desktop switch cloaks/uncloaks every window and moves the foreground.
-			// None of that is the user rearranging scenes: detect it first, handle it as one
-			// instant stage change, and drop the event storm it produces.
-			if (type == WindowUpdateType.Foreground || type == WindowUpdateType.Show)
+			// None of that is the user rearranging scenes: while the switch settles, drop the
+			// event storm and let the deferred desktop check apply one instant stage change.
+			if ((type == WindowUpdateType.Foreground || type == WindowUpdateType.Show) && IsDesktopSwitchSettling)
 			{
-				if (CheckVirtualDesktopChanged())
-					return;
-
-				if (!VirtualDesktop.IsOnCurrentDesktop(window.Handle))
-				{
-					Log.Window("VDESK", $"{type} on window from another virtual desktop, ignoring", window);
-					return;
-				}
+				Log.Window("VDESK", $"{type} during desktop switch, deferring", window);
+				QueueDesktopCheck();
+				return;
 			}
 
 			if (type == WindowUpdateType.Foreground)
@@ -505,7 +501,47 @@ namespace StageManager
 
 		private async void WindowsManager_WindowCreated(IWindow window, bool firstCreate)
 		{
-			SwitchToSceneByNewWindow(window).SafeFireAndForget();
+			SwitchToSceneByNewWindow(window, allowSwitch: !IsDesktopSwitchSettling).SafeFireAndForget();
+		}
+
+		// How long after the last shell cloak/uncloak a desktop switch counts as in progress.
+		private static readonly TimeSpan DesktopSwitchSettle = TimeSpan.FromMilliseconds(500);
+		private DateTime _desktopSwitchSettleUntil = DateTime.MinValue;
+		private bool _desktopCheckQueued;
+
+		private bool IsDesktopSwitchSettling => DateTime.UtcNow < _desktopSwitchSettleUntil;
+
+		// Runs inside the WinEvent callback: no COM, no window work — just note and defer.
+		private void WindowsManager_ShellCloakChanged()
+		{
+			_desktopSwitchSettleUntil = DateTime.UtcNow + DesktopSwitchSettle;
+			QueueDesktopCheck();
+		}
+
+		/// <summary>
+		/// Runs <see cref="CheckVirtualDesktopChanged"/> from the dispatcher, outside any
+		/// WinEvent callback — the shell's desktop COM calls fail inside one (input-synchronous
+		/// call), which is why the check never fired when it ran from the hook. Checks early for
+		/// a snappy stage change, then again once the switch has settled.
+		/// </summary>
+		private void QueueDesktopCheck()
+		{
+			if (_desktopCheckQueued) return;
+			var dispatcher = Application.Current?.Dispatcher;
+			if (dispatcher is null) return;
+			_desktopCheckQueued = true;
+			dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(async () =>
+			{
+				try
+				{
+					await Task.Delay(60);
+					CheckVirtualDesktopChanged();
+					while (IsDesktopSwitchSettling)
+						await Task.Delay(100);
+					CheckVirtualDesktopChanged();
+				}
+				finally { _desktopCheckQueued = false; }
+			}));
 		}
 
 		private async Task SwitchToSceneByWindow(IWindow window)
@@ -562,7 +598,7 @@ namespace StageManager
 				await SwitchTo(scene);
 		}
 
-		private async Task SwitchToSceneByNewWindow(IWindow window)
+		private async Task SwitchToSceneByNewWindow(IWindow window, bool allowSwitch = true)
 		{
 			// Keep persistent windows (e.g. Teams meeting pop-ups) outside of scene logic.
 			if (IsPersistentWindow(window))
@@ -615,6 +651,14 @@ namespace StageManager
 				scene.Add(window);
 				Log.Scene("New window → added to existing scene", scene, window);
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Updated));
+			}
+
+			// Mid desktop switch this is a window of the desktop being entered, not a new app
+			// the user just opened: bind it, and leave staging to HandleVirtualDesktopChanged.
+			if (!allowSwitch)
+			{
+				Log.Scene("New window during desktop switch → bound, no stage switch", scene, window);
+				return;
 			}
 
 			await SwitchTo(scene).ConfigureAwait(true);
@@ -699,8 +743,18 @@ namespace StageManager
 				s.IsSelected = ReferenceEquals(s, target);
 
 			if (target is not null)
-				foreach (var w in target.Windows.ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
+			{
+				// Windows first seen during this switch were bound without being staged; park
+				// whatever on this desktop isn't the target, as a normal scene switch would.
+				var here = GetSceneableWindows().ToArray()
+					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
+					.ToArray();
+				var targetWindows = target.Windows.ToArray();
+				foreach (var w in here.Except(targetWindows))
+					WindowStrategy.Hide(w);
+				foreach (var w in targetWindows.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
 					WindowStrategy.Show(w);
+			}
 
 			CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
 			VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
@@ -770,7 +824,7 @@ namespace StageManager
 					// Bottom-most first: Show ends in BringWindowToTop, so whichever window is
 					// shown last ends up on top. Feeding them in reverse depth order replays the
 					// stacking the scene had when it was last on screen.
-					foreach (var w in OrderBottomToTop(scene.Windows))
+					foreach (var w in OrderBottomToTop(scene.Windows.ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle)).ToArray()))
 					{
 						// Option1: Restore-then-clear for any minimized window in the active scene.
 						// A window the user minimized stays minimized: Show below skips iconic
@@ -794,10 +848,12 @@ namespace StageManager
 					// focused window if it belongs to the scene and is not minimised, otherwise
 					// the one that was frontmost. Focusing raises a window to the top, so taking
 					// the first in list order here would undo the stacking just restored above.
-					if (_lastFocusedWindow is object && scene.Windows.Contains(_lastFocusedWindow) && !_lastFocusedWindow.IsMinimized)
+					// Never a window on another virtual desktop: focusing one makes Windows jump there.
+					if (_lastFocusedWindow is object && scene.Windows.Contains(_lastFocusedWindow) && !_lastFocusedWindow.IsMinimized
+						&& VirtualDesktop.IsOnCurrentDesktop(_lastFocusedWindow.Handle))
 						focusCandidate = _lastFocusedWindow;
 					else
-						focusCandidate = OrderBottomToTop(scene.Windows).LastOrDefault(w => !w.IsMinimized);
+						focusCandidate = OrderBottomToTop(scene.Windows.ToArray()).LastOrDefault(w => !w.IsMinimized && VirtualDesktop.IsOnCurrentDesktop(w.Handle));
 
 					Log.Window("SWITCH", "Focus candidate", focusCandidate ?? scene.Windows.FirstOrDefault());
 				}

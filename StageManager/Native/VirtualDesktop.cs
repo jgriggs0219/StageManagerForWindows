@@ -79,11 +79,15 @@ namespace StageManager.Native
 			if (m is null || hwnd == IntPtr.Zero) return true;
 			try
 			{
-				return m.IsWindowOnCurrentVirtualDesktop(hwnd, out var on) != 0 || on;
+				var hr = m.IsWindowOnCurrentVirtualDesktop(hwnd, out var on);
+				if (hr != 0)
+					Log.Info("VDESK", $"IsWindowOnCurrentVirtualDesktop(0x{hwnd.ToInt64():X}) failed hr=0x{hr:X8}");
+				return hr != 0 || on;
 			}
-			catch (Exception)
+			catch (Exception ex)
 			{
 				// Explorer restarted — the RPC proxy is dead. Recreate on next call.
+				Log.Info("VDESK", $"IsWindowOnCurrentVirtualDesktop threw {ex.GetType().Name}: {ex.Message}");
 				_manager = null;
 				return true;
 			}

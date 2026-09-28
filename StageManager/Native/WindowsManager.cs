@@ -68,6 +68,13 @@ namespace StageManager.Native
 		/// Notifies when a handled window was removed by the manager
 		/// </summary>
 		public event WindowDelegate? WindowDestroyed;
+
+		/// <summary>
+		/// Raised when a tracked window is shell-cloaked or uncloaked — the signature of a
+		/// virtual desktop switch. Raised from inside the WinEvent callback: handlers must
+		/// only note it and defer real work.
+		/// </summary>
+		public event Action? ShellCloakChanged;
 		/// <summary>
 		/// Notifies when a handled window was updated by the manager
 		/// This is used internally by the workspace manager to apply the update to the window
@@ -374,12 +381,18 @@ namespace StageManager.Native
 						// left. Treating that as the window going away unregistered it, deleted
 						// its scene, and re-created everything as "new windows" on the way back.
 						if (_windows.ContainsKey(hwnd) && VirtualDesktop.IsShellCloaked(hwnd))
+						{
+							ShellCloakChanged?.Invoke();
 							break;
+						}
 						UpdateWindow(hwnd, WindowUpdateType.Hide);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
 						// The mirror image: a known window reappearing because its desktop came
-						// back is not the app asking to be shown.
+						// back is not the app asking to be shown. Unknown windows uncloaking (never
+						// seen because their desktop wasn't showing at startup) still register, but
+						// signal first so SceneManager binds them without switching the stage.
+						ShellCloakChanged?.Invoke();
 						if (_windows.ContainsKey(hwnd))
 							break;
 						UpdateWindow(hwnd, WindowUpdateType.Show);

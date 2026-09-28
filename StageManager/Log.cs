@@ -33,7 +33,7 @@ namespace StageManager
 			Info(tag, message);
 		}
 
-#if DEBUG
+#if DEBUG || SMLOG
 		private static readonly string LogPath = Path.Combine(
 			AppContext.BaseDirectory, "stagemanager.log");
 
@@ -57,7 +57,7 @@ namespace StageManager
 
 				Trace.Listeners.Add(new TextWriterTraceListener(LogPath));
 				Trace.AutoFlush = true;
-				Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [LOG] Logging to {LogPath}");
+				Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [LOG] Logging to {LogPath}");
 			}
 			catch { /* best-effort */ }
 		}
@@ -66,17 +66,17 @@ namespace StageManager
 		/// <summary>
 		/// Logs a user-initiated action with a visual separator for easy scanning.
 		/// </summary>
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Action(string description)
 		{
-			Debug.WriteLine("");
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] ──── {description}");
+			Trace.WriteLine("");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] ──── {description}");
 		}
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Info(string tag, string message)
 		{
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {message}");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {message}");
 		}
 
 		/// <summary>
@@ -84,39 +84,39 @@ namespace StageManager
 		/// is whether two things landed together, which the millisecond stamp on the other
 		/// overloads cannot answer at frame scale — see <see cref="FrameClock"/>.
 		/// </summary>
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Frame(string tag, string message)
 		{
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [f{FrameClock.Frame}] [{tag}] {message}");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [f{FrameClock.Frame}] [{tag}] {message}");
 		}
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Info(string tag, string message, IntPtr handle)
 		{
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {message} (0x{handle:X})");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {message} (0x{handle:X})");
 		}
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Window(string tag, string action, Native.Window.IWindow? window)
 		{
 			if (window is null)
 			{
-				Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {action}: (null)");
+				Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {action}: (null)");
 				return;
 			}
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {action}: '{window.Title}' Handle=0x{window.Handle:X} Process='{window.ProcessFileName}' Minimized={window.IsMinimized} Focused={window.IsFocused}");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [{tag}] {action}: '{window.Title}' Handle=0x{window.Handle:X} Process='{window.ProcessFileName}' Minimized={window.IsMinimized} Focused={window.IsFocused}");
 		}
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Scene(string action, Scene scene)
 		{
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [SCENE] {action}: '{scene?.Title ?? "(null)"}' Id={scene?.Id} Windows={scene?.Windows.Count() ?? 0}");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [SCENE] {action}: '{scene?.Title ?? "(null)"}' Id={scene?.Id} Windows={scene?.Windows.Count() ?? 0}");
 		}
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Scene(string action, Scene scene, Native.Window.IWindow window)
 		{
-			Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [SCENE] {action}: '{scene?.Title ?? "(null)"}' Id={scene?.Id} Window='{window?.Title}' Handle=0x{window?.Handle:X}");
+			Trace.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] [SCENE] {action}: '{scene?.Title ?? "(null)"}' Id={scene?.Id} Window='{window?.Title}' Handle=0x{window?.Handle:X}");
 		}
 	}
 }

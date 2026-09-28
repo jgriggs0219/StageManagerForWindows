@@ -24,7 +24,7 @@ namespace StageManager
 		/// <summary>Composition frames since <see cref="Start"/>. Zero in Release.</summary>
 		public static long Frame => Interlocked.Read(ref _frame);
 
-		[Conditional("DEBUG")]
+		[Conditional("SMLOG")]
 		public static void Start()
 		{
 			CompositionTarget.Rendering += (s, e) => Interlocked.Increment(ref _frame);

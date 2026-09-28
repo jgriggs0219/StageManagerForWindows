@@ -14,6 +14,11 @@
 		<ApplicationIcon>StageManager.ico</ApplicationIcon>
 	</PropertyGroup>
 
+	<!-- File logging (stagemanager.log next to the exe): always in Debug, opt-in for Release with -p:SmLog=true -->
+	<PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(SmLog)' == 'true'">
+		<DefineConstants>$(DefineConstants);SMLOG</DefineConstants>
+	</PropertyGroup>
+
 	<Target Name="SetVersionFromGitTag" Condition="'$(Version)' == '' Or '$(Version)' == '1.0.0'">
 		<Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low" EchoOff="true" WorkingDirectory="$(MSBuildProjectDirectory)">
 			<Output TaskParameter="ConsoleOutput" PropertyName="_GitTag" />
