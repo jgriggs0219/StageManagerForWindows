@@ -43,6 +43,7 @@
 	<ItemGroup>
 		<PackageReference Include="AsyncAwaitBestPractices" Version="9.0.0" />
 		<PackageReference Include="ControlzEx" Version="7.0.1" />
+		<PackageReference Include="Emoji.Wpf" Version="0.3.4" />
 		<PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
 		<PackageReference Include="Vortice.Direct3D11" Version="3.8.1" />
 		<PackageReference Include="Vortice.DXGI" Version="3.8.1" />
@@ -50,4 +51,13 @@
 		<PackageReference Include="WpfScreenHelper" Version="2.1.1" />
 	</ItemGroup>
 
+	<!-- Emoji.Wpf pulls in Typography.OpenFont, which defines its own System.Numerics.Vector2
+	     and clashes with the real one used by the capture code. Hide it behind an alias. -->
+	<Target Name="AliasTypographyOpenFont" AfterTargets="ResolveAssemblyReferences">
+		<ItemGroup>
+			<ReferencePath Condition="'%(FileName)' == 'Typography.OpenFont'">
+				<Aliases>typography</Aliases>
+			</ReferencePath>
+		</ItemGroup>
+	</Target>
 </Project>

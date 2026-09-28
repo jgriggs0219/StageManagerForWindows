@@ -1875,6 +1875,7 @@ namespace StageManager
 			if (signature == _otherDesktopsSignature)
 				return;
 			_otherDesktopsSignature = signature;
+			Log.Info("VDESK", $"Other desktops: {string.Join(" | ", ordered.Select(x => $"{x.Info.Name}=[{string.Join(", ", x.Apps!.Select(a => a.ProcessFileName))}]"))}");
 
 			OtherDesktops.Clear();
 			foreach (var (info, apps) in ordered)
