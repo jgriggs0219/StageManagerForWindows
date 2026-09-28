@@ -38,6 +38,14 @@ namespace StageManager.Model
 			Scene = updatedScene;
 
 			var updatedWindows = updatedScene.Windows.ToArray();
+
+			// Drop windows that are gone FIRST, so every index below refers to a live row.
+			for (int i = Windows.Count - 1; i >= 0; i--)
+			{
+				if (!updatedWindows.Any(w => w.Handle == Windows[i].Window.Handle))
+					Windows.RemoveAt(i);
+			}
+
 			for (int i = 0; i < updatedWindows.Length; i++)
 			{
 				if (Windows.Count > i && Windows[i].Window.Handle == updatedWindows[i].Handle)
@@ -52,7 +60,12 @@ namespace StageManager.Model
 					{
 						// has the window but other position -> update and move
 						windowToUpdate.Window = updatedWindows[i];
-						Windows.Move(Windows.IndexOf(windowToUpdate), i);
+						// Remove + Insert rather than Move: a Move on the tile's window list
+						// crashed WPF (Panel.MoveChildren index out of range) when the tile's
+						// panel had no generated children yet — seen during desktop switches.
+						var from = Windows.IndexOf(windowToUpdate);
+						Windows.RemoveAt(from);
+						Windows.Insert(Math.Min(i, Windows.Count), windowToUpdate);
 					}
 					else
 					{

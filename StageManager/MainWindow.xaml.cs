@@ -587,6 +587,22 @@ namespace StageManager
 			{
 				Log.Info("UI", $"SceneChanged: {e.Change} scene='{e.Scene.Title}'");
 
+				// A sidebar update failing must never take the process down: dying here leaves
+				// every parked window off-screen. Log it and rebuild the sidebar state instead.
+				try { ApplySceneChange(e); }
+				catch (Exception ex)
+				{
+					Log.Info("UI", $"SceneChanged {e.Change} failed, resyncing: {ex.GetType().Name}: {ex.Message}");
+					try { SyncVisibilityByUpdatedTimeStamp(); } catch { }
+				}
+
+				RefreshIconOverlay();
+			});
+		}
+
+		private void ApplySceneChange(SceneChangedEventArgs e)
+		{
+			{
 				switch (e.Change)
 				{
 					case ChangeType.Created:
@@ -608,9 +624,7 @@ namespace StageManager
 						SyncVisibilityByUpdatedTimeStamp();
 						break;
 				}
-
-				RefreshIconOverlay();
-			});
+			}
 		}
 
 		private void OnWindowUpdatedForDrag(IWindow window, WindowUpdateType type)
@@ -1867,6 +1881,7 @@ namespace StageManager
 				SyncVisibilityByUpdatedTimeStamp();
 				view.Refresh();
 				RefreshIconOverlay();
+				RestartPreviewsSoon();
 			}));
 
 			// Title rules follow window titles, which change as tabs change: re-check every 2 s.
@@ -1879,6 +1894,18 @@ namespace StageManager
 				SceneManager.RegroupWindows();
 			};
 			regroupTimer.Start();
+		}
+
+		/// <summary>
+		/// Tiles rebuilt by a regroup start their capture while the window is parked and idle,
+		/// so they can sit blank (icon only) until the app repaints. Re-grab them once the
+		/// sidebar has settled.
+		/// </summary>
+		private async void RestartPreviewsSoon()
+		{
+			await Task.Delay(400);
+			try { StageManager.Composition.CaptureSession.RestartActive(); }
+			catch (Exception ex) { Log.Info("CAPSESS", $"RestartActive failed: {ex.Message}"); }
 		}
 
 		/// <summary>

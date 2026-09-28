@@ -42,6 +42,16 @@ namespace StageManager.Native
 			}
 		}
 
+		[DllImport("dwmapi.dll")]
+		private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+
+		/// <summary>
+		/// True when the shell has cloaked the window — what switching virtual desktops does to
+		/// every window on the desktop being left. Pure DWM query, safe in a WinEvent callback.
+		/// </summary>
+		public static bool IsShellCloaked(IntPtr hwnd) =>
+			DwmGetWindowAttribute(hwnd, 14 /* DWMWA_CLOAKED */, out var v, sizeof(int)) == 0 && (v & 0x2 /* DWM_CLOAKED_SHELL */) != 0;
+
 		/// <summary>True when the shell reports the window as belonging to no desktop (shown on all).</summary>
 		public static bool IsUnassigned(IntPtr hwnd)
 		{

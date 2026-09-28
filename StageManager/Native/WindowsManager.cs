@@ -370,9 +370,17 @@ namespace StageManager.Native
 						UnregisterWindow(hwnd);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED:
+						// Switching virtual desktops shell-cloaks every window on the desktop being
+						// left. That is not the window closing: treating it as one tore down every
+						// tile at once (and crashed the sidebar). Keep known windows as they are.
+						if (_windows.ContainsKey(hwnd) && VirtualDesktop.IsShellCloaked(hwnd))
+							break;
 						UpdateWindow(hwnd, WindowUpdateType.Hide);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
+						// ...and a known window reappearing on the way back is not a new request.
+						if (_windows.ContainsKey(hwnd))
+							break;
 						UpdateWindow(hwnd, WindowUpdateType.Show);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:
