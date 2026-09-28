@@ -150,6 +150,7 @@ namespace StageManager
 				if (_filterProcessKey != null)
 					ClearAppFilter();
 				var sceneModel = (SceneModel)model;
+				if (sceneModel.IsPlaceholder) return;
 				await AnimatedSwitchTo(sceneModel.Scene);
 			});
 
@@ -1019,7 +1020,10 @@ namespace StageManager
 
 		private void SyncVisibilityByUpdatedTimeStamp()
 		{
+			EnsureGroupPlaceholders();
 			foreach (var m in Scenes) m.RefreshGroup();
+			var activeGroup = _removedCurrentScene?.GroupName ?? "";
+			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
 			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
 			int ungrouped = 0; // grouped apps always show; the recent-apps cap is for ungrouped ones
 
@@ -1878,6 +1882,20 @@ namespace StageManager
 		}
 
 		/// <summary>
+		/// Keeps one empty stand-in tile per group in the sidebar list, so every group's header
+		/// shows even while all its apps are on stage (the stage scene is taken out of the list).
+		/// </summary>
+		private void EnsureGroupPlaceholders()
+		{
+			var groups = Services.AppGroups.Groups;
+			foreach (var stale in Scenes.Where(s => s.IsPlaceholder && !groups.Contains(s.PlaceholderGroup!)).ToArray())
+				Scenes.Remove(stale);
+			foreach (var g in groups)
+				if (!Scenes.Any(s => s.PlaceholderGroup == g))
+					Scenes.Add(SceneModel.CreatePlaceholder(g));
+		}
+
+		/// <summary>
 		/// "Move a window to a group" dialog: pick one of the tile's windows, pick or type a
 		/// group, and optionally remember it by title so it lands there after restarts.
 		/// </summary>
@@ -2010,6 +2028,7 @@ namespace StageManager
 		/// <summary>Right-click menu for a sidebar tile (also opened from its app icon).</summary>
 		private void ShowSceneMenu(SceneModel model)
 		{
+			if (model.IsPlaceholder) return;
 			var menu = new ContextMenu();
 			if (TryFindResource("TrayContextMenuStyle") is Style menuStyle)
 				menu.Style = menuStyle;

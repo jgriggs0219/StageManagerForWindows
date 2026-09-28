@@ -19,6 +19,7 @@ namespace StageManager.Services
 			public List<string> Groups { get; set; } = new();
 			public Dictionary<string, string> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 			public List<TitleRule> Rules { get; set; } = new();
+			public List<List<string>> Splits { get; set; } = new();
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -108,6 +109,45 @@ namespace StageManager.Services
 			if (_data.Rules.RemoveAll(r => r.Group == group) > 0) Save();
 		}
 
+		/// <summary>
+		/// Apps the user combined into one tile (a "split", e.g. Dialpad + Discord side by side).
+		/// Remembered by executable, so after a restart their windows land in one tile again.
+		/// </summary>
+		public static IReadOnlyList<List<string>> Splits => _data.Splits;
+
+		/// <summary>Stable key for the split an app belongs to, or null.</summary>
+		public static string? GetSplitKey(string? exe)
+		{
+			if (exe is null) return null;
+			var s = _data.Splits.FirstOrDefault(x => x.Contains(exe, StringComparer.OrdinalIgnoreCase));
+			return s is null ? null : "split:" + string.Join("+", s.OrderBy(e => e, StringComparer.OrdinalIgnoreCase));
+		}
+
+		/// <summary>
+		/// Records that these apps share a tile. Each app is in at most one split, so they are
+		/// first taken out of any other; splits left with fewer than two apps disappear.
+		/// </summary>
+		public static void RecordSplit(IEnumerable<string> exes)
+		{
+			var set = exes.Where(e => !string.IsNullOrEmpty(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+			if (set.Count < 2) return;
+			var existing = _data.Splits.FirstOrDefault(x => x.Count == set.Count && x.All(e => set.Contains(e, StringComparer.OrdinalIgnoreCase)));
+			if (existing is not null) return;
+			foreach (var s in _data.Splits) s.RemoveAll(e => set.Contains(e, StringComparer.OrdinalIgnoreCase));
+			_data.Splits.RemoveAll(s => s.Count < 2);
+			_data.Splits.Add(set);
+			Save();
+		}
+
+		/// <summary>Takes an app out of its split (the user pulled it into its own tile).</summary>
+		public static void RemoveFromSplit(string exe)
+		{
+			var changed = false;
+			foreach (var s in _data.Splits) changed |= s.RemoveAll(e => string.Equals(e, exe, StringComparison.OrdinalIgnoreCase)) > 0;
+			_data.Splits.RemoveAll(s => s.Count < 2);
+			if (changed) Save();
+		}
+
 		public static void Assign(string exe, string group)
 		{
 			if (!_data.Groups.Contains(group)) _data.Groups.Add(group);
@@ -178,6 +218,7 @@ namespace StageManager.Services
 						d.Apps = new Dictionary<string, string>(d.Apps ?? new(), StringComparer.OrdinalIgnoreCase);
 						d.Groups ??= new();
 						d.Rules ??= new();
+						d.Splits ??= new();
 						return d;
 					}
 				}

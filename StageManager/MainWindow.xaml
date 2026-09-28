@@ -161,28 +161,64 @@
                                 <StackPanel>
                                     <!-- Bright accent divider, then the name in a pill, so each
                                          section reads as its own block at a glance. -->
-                                    <Border Height="2" CornerRadius="1" Margin="0,2,20,8">
+                                    <!-- Colour comes from the group (SceneModel.GroupColor, same for
+                                         every tile in it); the group on stage gets a filled,
+                                         thicker pill and an "on stage" dot. -->
+                                    <Border Height="3" CornerRadius="1.5" Margin="0,2,20,8">
                                         <Border.Background>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                                <GradientStop Color="#FF4C9BFF" Offset="0" />
-                                                <GradientStop Color="#004C9BFF" Offset="1" />
-                                            </LinearGradientBrush>
+                                            <SolidColorBrush Color="{Binding Items[0].GroupColor}" />
                                         </Border.Background>
+                                        <Border.OpacityMask>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <GradientStop Color="#FF000000" Offset="0" />
+                                                <GradientStop Color="#00000000" Offset="1" />
+                                            </LinearGradientBrush>
+                                        </Border.OpacityMask>
                                     </Border>
                                     <Border
                                         HorizontalAlignment="Left"
                                         CornerRadius="10"
-                                        Padding="9,3,11,3"
-                                        Background="#CC1C2433"
-                                        BorderBrush="#994C9BFF"
-                                        BorderThickness="1">
-                                        <emoji:TextBlock
-                                            Text="{Binding Name}"
-                                            Foreground="#FFFFFFFF"
-                                            FontSize="12"
-                                            FontWeight="SemiBold"
-                                            TextTrimming="CharacterEllipsis"
-                                            MaxWidth="150" />
+                                        Padding="9,3,11,3">
+                                        <Border.BorderBrush>
+                                            <SolidColorBrush Color="{Binding Items[0].GroupColor}" />
+                                        </Border.BorderBrush>
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="BorderThickness" Value="1" />
+                                                <Setter Property="Background" Value="#CC1A1F2A" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Items[0].IsActiveGroup}" Value="True">
+                                                        <Setter Property="BorderThickness" Value="2" />
+                                                        <Setter Property="Background" Value="#E62A3242" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel Orientation="Horizontal">
+                                            <emoji:TextBlock
+                                                Text="{Binding Name}"
+                                                Foreground="#FFFFFFFF"
+                                                FontSize="12"
+                                                FontWeight="SemiBold"
+                                                TextTrimming="CharacterEllipsis"
+                                                MaxWidth="130" />
+                                            <Ellipse Width="7" Height="7" Margin="7,0,0,0" VerticalAlignment="Center"
+                                                     ToolTip="On stage">
+                                                <Ellipse.Fill>
+                                                    <SolidColorBrush Color="{Binding Items[0].GroupColor}" />
+                                                </Ellipse.Fill>
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Items[0].IsActiveGroup}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                        </StackPanel>
                                     </Border>
                                 </StackPanel>
                             </Border>

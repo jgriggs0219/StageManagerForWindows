@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Windows.Media;
 
 namespace StageManager.Model
 {
@@ -311,12 +312,57 @@ namespace StageManager.Model
 			private set { if (_groupOrder != value) { _groupOrder = value; RaisePropertyChanged(); } }
 		}
 
+		/// <summary>
+		/// Set on the empty stand-in tile MainWindow keeps for every group, so a group's header
+		/// stays in the sidebar even when all its apps are on stage. Never a real scene.
+		/// </summary>
+		public string? PlaceholderGroup { get; init; }
+		public bool IsPlaceholder => PlaceholderGroup is not null;
+
+		public static SceneModel CreatePlaceholder(string group)
+		{
+			var m = new SceneModel { PlaceholderGroup = group, Id = Guid.NewGuid() };
+			m.Scene = new Scene("placeholder:" + group);
+			m.RefreshGroup();
+			return m;
+		}
+
+		// Group colours, in group order. Picked to read on dark wallpapers.
+		private static readonly Color[] GroupPalette =
+		{
+			Color.FromRgb(0x4C, 0x9B, 0xFF), // blue
+			Color.FromRgb(0xFF, 0x9F, 0x43), // orange
+			Color.FromRgb(0x2E, 0xD5, 0x73), // green
+			Color.FromRgb(0xC1, 0x6C, 0xFF), // purple
+			Color.FromRgb(0xFF, 0x5C, 0x8A), // pink
+			Color.FromRgb(0x26, 0xD0, 0xCE), // teal
+			Color.FromRgb(0xFF, 0xD1, 0x4A), // yellow
+		};
+
+		public Color GroupColor => GroupOrder <= 0 ? Colors.Transparent : GroupPalette[(GroupOrder - 1) % GroupPalette.Length];
+
+		private bool _isActiveGroup;
+		/// <summary>True when the app on stage belongs to this tile's group; the header lights up.</summary>
+		public bool IsActiveGroup
+		{
+			get => _isActiveGroup;
+			set { if (_isActiveGroup != value) { _isActiveGroup = value; RaisePropertyChanged(); } }
+		}
+
 		/// <summary>Re-reads group membership after AppGroups changed or windows changed.</summary>
 		public void RefreshGroup()
 		{
+			if (PlaceholderGroup is not null)
+			{
+				GroupName = PlaceholderGroup;
+				GroupOrder = Services.AppGroups.GetOrder(PlaceholderGroup);
+				RaisePropertyChanged(nameof(GroupColor));
+				return;
+			}
 			var w = Windows.FirstOrDefault()?.Window;
 			GroupName = w is null ? "" : Services.AppGroups.GetWindowGroup(w.Handle, w.ProcessFileName, w.Title);
 			GroupOrder = Services.AppGroups.GetOrder(GroupName);
+			RaisePropertyChanged(nameof(GroupColor));
 		}
 
 		private void RaisePropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string memberName = "")

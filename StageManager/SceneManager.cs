@@ -832,6 +832,9 @@ namespace StageManager
 				sourceScene.Remove(window);
 				targetScene.Add(window);
 
+				// Remember the combination so it survives restarts (and so RegroupWindows keeps it).
+				AppGroups.RecordSplit(targetScene.Windows.Select(w => w.ProcessFileName ?? ""));
+
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Updated));
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(targetScene, window, ChangeType.Updated));
 
@@ -928,6 +931,11 @@ namespace StageManager
 
 				source.Remove(window);
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(source, window, ChangeType.Updated));
+
+				// Pulled out of a combined tile on purpose: stop remembering it as part of the split
+				// (unless another window of the same app stays behind in that tile).
+				if (window.ProcessFileName is string exe && !source.Windows.Any(w => string.Equals(w.ProcessFileName, exe, StringComparison.OrdinalIgnoreCase)))
+					AppGroups.RemoveFromSplit(exe);
 
 				var newScene = new Scene(GetWindowGroupKey(window), window);
 				lock (_scenesLock)
@@ -1183,9 +1191,10 @@ namespace StageManager
 		//
 		// This fulfils the requirement that launching a new program should ALWAYS
 		// create a separate scene.
-		// One scene per app per user group: a Chrome window given its own group gets its own tile.
+		// One scene per app (or remembered split of apps) per user group: a Chrome window given
+		// its own group gets its own tile; apps the user combined share one again after restart.
 		private string GetWindowGroupKey(IWindow window) =>
-			$"{window.ProcessId}#{AppGroups.GetWindowGroup(window.Handle, window.ProcessFileName, window.Title)}";
+			$"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetWindowGroup(window.Handle, window.ProcessFileName, window.Title)}";
 
 		public void Dispose()
 		{
