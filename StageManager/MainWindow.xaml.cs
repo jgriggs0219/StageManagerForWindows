@@ -389,7 +389,7 @@ namespace StageManager
 
 			SceneManager.SceneChanged += SceneManager_SceneChanged;
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
-			SceneManager.VirtualDesktopChanged += (_, _) => SyncVisibilityByUpdatedTimeStamp();
+			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); RefreshIconOverlay(); };
 
 			// Switching to an empty virtual desktop raises no window events, so poll for it.
 			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
@@ -1002,7 +1002,7 @@ namespace StageManager
 		private void SyncVisibilityByUpdatedTimeStamp()
 		{
 			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
 				off.IsVisible = false;
 			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 
@@ -1089,7 +1089,7 @@ namespace StageManager
 			var iconGen = ++_filterIconGen;
 
 			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
 				off.IsVisible = false;
 			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 			bool[] target = new bool[scenes.Length];
