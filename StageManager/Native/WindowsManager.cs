@@ -68,13 +68,6 @@ namespace StageManager.Native
 		/// Notifies when a handled window was removed by the manager
 		/// </summary>
 		public event WindowDelegate? WindowDestroyed;
-
-		/// <summary>
-		/// Raised when a tracked window is shell-cloaked or uncloaked — the signature of a
-		/// virtual desktop switch. Raised from inside the WinEvent callback: handlers must
-		/// only note it and defer real work.
-		/// </summary>
-		public event Action? ShellCloakChanged;
 		/// <summary>
 		/// Notifies when a handled window was updated by the manager
 		/// This is used internally by the workspace manager to apply the update to the window
@@ -274,15 +267,6 @@ namespace StageManager.Native
 			if (!Win32.IsIconic(hwnd))
 				return;
 
-			// Never touch windows on other virtual desktops: restoring one here left it
-			// transparent and click-through on its desktop (nothing un-does that until it is
-			// staged), and could drag it onto the current desktop.
-			if (VirtualDesktop.IsShellCloaked(hwnd) && !VirtualDesktop.IsOnCurrentDesktop(hwnd))
-			{
-				Log.Info("STARTUP", $"Minimized window 0x{hwnd.ToInt64():X} is on another desktop, leaving it alone");
-				return;
-			}
-
 			try
 			{
 				// Cloak BEFORE the show call so the window emerges already invisible — no flash,
@@ -386,24 +370,9 @@ namespace StageManager.Native
 						UnregisterWindow(hwnd);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED:
-						// A virtual desktop switch shell-cloaks every window on the desktop being
-						// left. Treating that as the window going away unregistered it, deleted
-						// its scene, and re-created everything as "new windows" on the way back.
-						if (_windows.ContainsKey(hwnd) && VirtualDesktop.IsShellCloaked(hwnd))
-						{
-							ShellCloakChanged?.Invoke();
-							break;
-						}
 						UpdateWindow(hwnd, WindowUpdateType.Hide);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
-						// The mirror image: a known window reappearing because its desktop came
-						// back is not the app asking to be shown. Unknown windows uncloaking (never
-						// seen because their desktop wasn't showing at startup) still register, but
-						// signal first so SceneManager binds them without switching the stage.
-						ShellCloakChanged?.Invoke();
-						if (_windows.ContainsKey(hwnd))
-							break;
 						UpdateWindow(hwnd, WindowUpdateType.Show);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:

@@ -20,6 +20,7 @@ namespace StageManager.Model
 			model.Scene = scene;
 			// Initial preview size calculation
 			model.UpdatePreviewSizes();
+			model.RefreshGroup();
 			return model;
 		}
 
@@ -285,6 +286,32 @@ namespace StageManager.Model
 		}
 
 		public DateTime Updated { get; private set; }
+
+		/// <summary>The app's executable, which is what groups remember.</summary>
+		public string? ProcessKey => Windows.FirstOrDefault()?.Window?.ProcessFileName;
+
+		private string _groupName = "";
+		/// <summary>User group this app belongs to ("" = ungrouped). See Services.AppGroups.</summary>
+		public string GroupName
+		{
+			get => _groupName;
+			private set { if (_groupName != value) { _groupName = value; RaisePropertyChanged(); } }
+		}
+
+		private int _groupOrder;
+		/// <summary>Sidebar order of this tile's group: ungrouped first, then groups in order.</summary>
+		public int GroupOrder
+		{
+			get => _groupOrder;
+			private set { if (_groupOrder != value) { _groupOrder = value; RaisePropertyChanged(); } }
+		}
+
+		/// <summary>Re-reads group membership after AppGroups changed or windows changed.</summary>
+		public void RefreshGroup()
+		{
+			GroupName = Services.AppGroups.GetGroup(ProcessKey);
+			GroupOrder = Services.AppGroups.GetOrder(GroupName);
+		}
 
 		private void RaisePropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string memberName = "")
 		{

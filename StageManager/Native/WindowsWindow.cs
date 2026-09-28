@@ -205,9 +205,7 @@ namespace StageManager.Native
 				// special-case pop-ups.
 
 				return _didManualHide ||
-					// Cloaked windows are normally not real app windows — except the ones the shell
-					// cloaked because they live on another virtual desktop. Those are the user's apps.
-					((!Win32Helper.IsCloaked(_handle) || (VirtualDesktop.IsShellCloaked(_handle) && !VirtualDesktop.IsOnCurrentDesktop(_handle))) /* https://devblogs.microsoft.com/oldnewthing/20200302-00/?p=103507 */ &&
+					(!Win32Helper.IsCloaked(_handle) /* https://devblogs.microsoft.com/oldnewthing/20200302-00/?p=103507 */ &&
 					   Win32Helper.IsAppWindow(_handle) &&
 					   Win32Helper.IsAltTabWindow(_handle) &&
 					   hasCaptionControls);

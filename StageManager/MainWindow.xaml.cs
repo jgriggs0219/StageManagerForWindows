@@ -59,7 +59,6 @@ namespace StageManager
 		private bool _suppressNextModeSlide;
 		private double _lastWidth;
 		private Timer? _overlapCheckTimer;
-		private System.Windows.Threading.DispatcherTimer? _desktopPollTimer;
 		private long _mouseX;
 		private CancellationTokenSource? _cancellationTokenSource;
 		private SceneModel? _removedCurrentScene;
@@ -142,6 +141,7 @@ namespace StageManager
 
 			// Set DataContext AFTER setting is loaded
 			DataContext = this;
+			SetupAppGroups();
 
 			_overlapCheckTimer = new Timer(OverlapCheck, null, 2500, TIMERINTERVAL_MILLISECONDS);
 
@@ -352,7 +352,6 @@ namespace StageManager
 
 			// Dispose the overlap check timer to stop background operations
 			_overlapCheckTimer?.Dispose();
-			_desktopPollTimer?.Stop();
 
 			trayIcon.Dispose();
 
@@ -391,27 +390,6 @@ namespace StageManager
 
 			SceneManager.SceneChanged += SceneManager_SceneChanged;
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
-			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); RefreshIconOverlay(); };
-			SceneManager.VirtualDesktopSettled += async (_, _) =>
-			{
-				// Let the uncloak finish, then re-grab previews captured mid-slide.
-				await Task.Delay(120);
-				StageManager.Composition.CaptureSession.RestartActive();
-			};
-
-			// Explorer updates the current desktop in the registry the instant a switch starts.
-			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(75) };
-			var desktopTick = 0;
-			_desktopPollTimer.Tick += (_, _) =>
-			{
-				if (_sceneTransitionAnimator.IsAnimating)
-					return;
-				SceneManager.PollVirtualDesktop();
-				// ~1 s: pick up apps opened/closed on other desktops (no-op when unchanged).
-				if (++desktopTick % 13 == 0)
-					RefreshOtherDesktops();
-			};
-			_desktopPollTimer.Start();
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
 
 			// Wire up drag-and-drop manager
@@ -928,14 +906,41 @@ namespace StageManager
 				}
 				else
 				{
-					Log.Info("DRAG", $"WPF drag cancelled (phase={phase})");
+					// Dropped inside the sidebar: over a group's header, or over a tile that is in a
+					// group, moves the dragged app into that group.
+					var target = FindGroupAt(e.GetPosition(this));
+					var exe = _wpfDragScene?.ProcessKey;
+					Log.Info("DRAG", $"WPF drag ended in sidebar (phase={phase}) over group '{target ?? "(none)"}'");
 					CancelWpfDrag();
+					if (target is { Length: > 0 } && exe is not null && target != _wpfDragScene?.GroupName)
+						Services.AppGroups.Assign(exe, target);
 				}
 				return;
 			}
 
 			// Not dragging — let SwitchSceneCommand fire normally
 			_wpfDragScene = null;
+		}
+
+		/// <summary>
+		/// The app group under a sidebar point: a group header, or a tile inside a group.
+		/// Null when over nothing grouped.
+		/// </summary>
+		private string? FindGroupAt(Point p)
+		{
+			DependencyObject? d = InputHitTest(p) as DependencyObject;
+			while (d is not null)
+			{
+				if (d is FrameworkElement fe)
+				{
+					if (fe.DataContext is System.Windows.Data.CollectionViewGroup g)
+						return g.Name as string;
+					if (fe.DataContext is SceneModel s && s.GroupName.Length > 0)
+						return s.GroupName;
+				}
+				d = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+			}
+			return null;
 		}
 
 		private void CancelWpfDrag()
@@ -1014,18 +1019,16 @@ namespace StageManager
 
 		private void SyncVisibilityByUpdatedTimeStamp()
 		{
-			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.ToArray().Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
-				off.IsVisible = false;
-			var scenes = Scenes.ToArray().Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
+			foreach (var m in Scenes) m.RefreshGroup();
+			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
+			int ungrouped = 0; // grouped apps always show; the recent-apps cap is for ungrouped ones
 
 			if (_filterProcessKey == null)
 			{
 				for (int i = 0; i < scenes.Length; i++)
-					scenes[i].IsVisible = i < MAX_SCENES;
+					scenes[i].IsVisible = scenes[i].GroupName.Length > 0 || ungrouped++ < MAX_SCENES;
 				Log.Info("FILTER", $"SyncVisibility: filter=<none> total={scenes.Length} shown={Math.Min(scenes.Length, MAX_SCENES)} (cap={MAX_SCENES})");
 				AssignRowTilts();
-				RefreshOtherDesktops();
 				return;
 			}
 
@@ -1040,7 +1043,6 @@ namespace StageManager
 			}
 			Log.Info("FILTER", $"SyncVisibility: filter='{_filterProcessKey}' shown={shown} hidden={hidden} total={scenes.Length}");
 			AssignRowTilts();
-			RefreshOtherDesktops();
 		}
 
 		// Assigns each visible scene the top/bottom edge angles the macOS position
@@ -1103,14 +1105,13 @@ namespace StageManager
 		{
 			var iconGen = ++_filterIconGen;
 
-			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.ToArray().Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
-				off.IsVisible = false;
-			var scenes = Scenes.ToArray().Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
+			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
 			bool[] target = new bool[scenes.Length];
 			if (_filterProcessKey == null)
 			{
-				for (int i = 0; i < scenes.Length; i++) target[i] = i < MAX_SCENES;
+				// Grouped apps always show; the recent-apps cap applies to ungrouped ones.
+				int ungrouped = 0;
+				for (int i = 0; i < scenes.Length; i++) target[i] = scenes[i].GroupName.Length > 0 || ungrouped++ < MAX_SCENES;
 			}
 			else
 			{
@@ -1835,92 +1836,94 @@ namespace StageManager
 			RefreshSettingsMenuChecks();
 		}
 
-		public ObservableCollection<DesktopGroupModel> OtherDesktops { get; } = new ObservableCollection<DesktopGroupModel>();
-
-		private string _currentDesktopName = "";
-		public string CurrentDesktopName
-		{
-			get => _currentDesktopName;
-			private set
-			{
-				if (_currentDesktopName == value) return;
-				_currentDesktopName = value;
-				RaisePropertyChanged();
-			}
-		}
-
-		private string _otherDesktopsSignature = "";
-		private readonly Dictionary<IntPtr, ImageSource?> _desktopIconCache = new Dictionary<IntPtr, ImageSource?>();
-
 		/// <summary>
-		/// Rebuilds the "other desktops" section under the scene tiles. Skips the rebuild when
-		/// nothing visible changed, so the frequent sidebar syncs don't make it blink.
+		/// Groups the sidebar by Services.AppGroups: ungrouped tiles first, then each group in
+		/// the user's order. Live grouping/sorting re-sections a tile the moment its group changes.
 		/// </summary>
-		private void RefreshOtherDesktops()
+		private void SetupAppGroups()
 		{
-			if (SceneManager is null)
-				return;
-
-			var desktops = VirtualDesktop.GetDesktops();
-			var currentId = VirtualDesktop.CurrentDesktopId;
-			// Only label desktops when there is more than one — a lone desktop needs no name.
-			CurrentDesktopName = desktops.Count > 1 ? desktops.FirstOrDefault(d => d.Id == currentId)?.Name ?? "" : "";
-			var groups = SceneManager.GetOtherDesktopApps();
-			var ordered = desktops
-				.Select(d => (Info: d, Apps: groups.FirstOrDefault(g => g.Desktop == d.Id).Apps))
-				.Where(x => x.Apps is { Count: > 0 })
-				.ToList();
-
-			var signature = string.Join("|", ordered.Select(x => $"{x.Info.Id}:{x.Info.Name}:{string.Join(",", x.Apps!.Select(a => a.Handle))}"));
-			if (signature == _otherDesktopsSignature)
-				return;
-			_otherDesktopsSignature = signature;
-			Log.Info("VDESK", $"Other desktops: {string.Join(" | ", ordered.Select(x => $"{x.Info.Name}=[{string.Join(", ", x.Apps!.Select(a => a.ProcessFileName))}]"))}");
-
-			OtherDesktops.Clear();
-			foreach (var (info, apps) in ordered)
+			var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(Scenes);
+			view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription(nameof(SceneModel.GroupName)));
+			// Group order first; inside a group keep the collection's own order, which the
+			// scene-switch code maintains.
+			view.CustomSort = System.Collections.Generic.Comparer<object>.Create((a, b) =>
 			{
-				OtherDesktops.Add(new DesktopGroupModel
-				{
-					Id = info.Id,
-					Name = info.Name,
-					Apps = apps!.Select(w => new DesktopAppModel
-					{
-						Title = w.Title,
-						Handle = w.Handle,
-						Icon = GetDesktopAppIcon(w),
-					}).ToList(),
-				});
-			}
+				var x = (SceneModel)a; var y = (SceneModel)b;
+				var c = x.GroupOrder.CompareTo(y.GroupOrder);
+				return c != 0 ? c : Scenes.IndexOf(x).CompareTo(Scenes.IndexOf(y));
+			}) as System.Collections.IComparer;
+			view.IsLiveGrouping = true;
+			view.LiveGroupingProperties.Add(nameof(SceneModel.GroupName));
+			view.IsLiveSorting = true;
+			view.LiveSortingProperties.Add(nameof(SceneModel.GroupOrder));
+
+			Services.AppGroups.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
+			{
+				SyncVisibilityByUpdatedTimeStamp();
+				view.Refresh();
+				RefreshIconOverlay();
+			}));
 		}
 
-		private ImageSource? GetDesktopAppIcon(IWindow window)
+		private void GroupHeader_RightClick(object sender, MouseButtonEventArgs e)
 		{
-			if (_desktopIconCache.TryGetValue(window.Handle, out var cached))
-				return cached;
-			ImageSource? icon = null;
-			try
-			{
-				using var raw = ((WindowsWindow)window).ExtractIcon();
-				icon = WindowModel.IconToImageSource(raw);
-			}
-			catch (Exception ex) { Log.Info("VDESK", $"Icon extract failed for 0x{window.Handle.ToInt64():X}: {ex.Message}"); }
-			return _desktopIconCache[window.Handle] = icon;
-		}
-
-		/// <summary>
-		/// Jumps to an app on another desktop: activating its window makes Windows switch to
-		/// that desktop, and SceneManager stages it once the switch settles.
-		/// </summary>
-		private void OtherDesktopApp_Click(object sender, MouseButtonEventArgs e)
-		{
-			if (sender is not FrameworkElement { Tag: IntPtr handle } || handle == IntPtr.Zero)
+			if (sender is not FrameworkElement { Tag: string group } || group.Length == 0)
 				return;
-			Log.Action($"Other-desktop app clicked: 0x{handle.ToInt64():X}");
-			if (Win32.IsIconic(handle))
-				Win32.ShowWindow(handle, Win32.SW.SW_RESTORE);
-			Win32Helper.ForceForegroundWindow(handle);
 			e.Handled = true;
+
+			var menu = new ContextMenu();
+			if (TryFindResource("TrayContextMenuStyle") is Style menuStyle)
+				menu.Style = menuStyle;
+			var itemStyle = TryFindResource("TrayMenuItemStyle") as Style;
+			MenuItem Item(string header, Action action)
+			{
+				var mi = new MenuItem { Header = header };
+				if (itemStyle is not null) mi.Style = itemStyle;
+				mi.Click += (_, _) => action();
+				return mi;
+			}
+
+			menu.Items.Add(Item("Rename group…", () =>
+			{
+				var name = PromptText("Rename group", "Name (tip: Win + . for emoji)", group);
+				if (name is not null) Services.AppGroups.Rename(group, name);
+			}));
+			menu.Items.Add(Item("Move up", () => Services.AppGroups.Move(group, -1)));
+			menu.Items.Add(Item("Move down", () => Services.AppGroups.Move(group, +1)));
+			menu.Items.Add(Item("Delete group (apps stay open)", () => Services.AppGroups.Delete(group)));
+			menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+			menu.IsOpen = true;
+		}
+
+		/// <summary>Small dark text prompt. Returns null when cancelled.</summary>
+		private static string? PromptText(string title, string hint, string initial)
+		{
+			var box = new TextBox
+			{
+				Text = initial, FontSize = 15, Padding = new Thickness(6, 4, 6, 4), MinWidth = 260,
+				Background = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)),
+				Foreground = Brushes.White, CaretBrush = Brushes.White,
+				BorderBrush = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)),
+			};
+			var ok = new Button { Content = "OK", IsDefault = true, Width = 80, Margin = new Thickness(0, 12, 8, 0) };
+			var cancel = new Button { Content = "Cancel", IsCancel = true, Width = 80, Margin = new Thickness(0, 12, 0, 0) };
+			var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+			buttons.Children.Add(ok);
+			buttons.Children.Add(cancel);
+			var panel = new StackPanel { Margin = new Thickness(16) };
+			panel.Children.Add(new TextBlock { Text = hint, Foreground = Brushes.Gainsboro, Margin = new Thickness(0, 0, 0, 8) });
+			panel.Children.Add(box);
+			panel.Children.Add(buttons);
+
+			var win = new Window
+			{
+				Title = title, Content = panel, SizeToContent = SizeToContent.WidthAndHeight,
+				WindowStartupLocation = WindowStartupLocation.CenterScreen, ResizeMode = ResizeMode.NoResize,
+				Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)), Topmost = true, ShowInTaskbar = false,
+			};
+			ok.Click += (_, _) => win.DialogResult = true;
+			win.Loaded += (_, _) => { box.Focus(); box.SelectAll(); win.Activate(); };
+			return win.ShowDialog() == true ? box.Text : null;
 		}
 
 		private void SceneTile_RightClick(object sender, MouseButtonEventArgs e)
@@ -1949,7 +1952,27 @@ namespace StageManager
 				return mi;
 			}
 
-			menu.Items.Add(Item("Make all apps here this size (stacked)", () => StackAllLike(model)));
+			// Groups: move this app into any other group, start a new one, or leave its group.
+			var exe = model.ProcessKey;
+			if (exe is not null)
+			{
+				foreach (var g in Services.AppGroups.Groups.Where(g => g != model.GroupName))
+				{
+					var group = g;
+					menu.Items.Add(Item($"Move to {group}", () => Services.AppGroups.Assign(exe, group)));
+				}
+				menu.Items.Add(Item("Move to new group…", () =>
+				{
+					var name = PromptText("New group", "Name (tip: Win + . for emoji)", "");
+					var created = name is null ? null : Services.AppGroups.Create(name);
+					if (created is not null) Services.AppGroups.Assign(exe, created);
+				}));
+				if (model.GroupName.Length > 0)
+					menu.Items.Add(Item($"Remove from {model.GroupName}", () => Services.AppGroups.Unassign(exe)));
+				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
+			}
+
+			menu.Items.Add(Item("Make all apps this size (stacked)", () => StackAllLike(model)));
 			menu.Items.Add(Item("Show only this app", () =>
 			{
 				var key = model.Windows.FirstOrDefault()?.Window?.ProcessFileName;
@@ -1977,7 +2000,7 @@ namespace StageManager
 		}
 
 		/// <summary>
-		/// Gives every app window on the current desktop the size of this scene's window,
+		/// Gives every app window the size of this scene's window,
 		/// all centred on the stage (the work area right of the sidebar) — one neat stack,
 		/// like macOS. Parked windows are resized in place and will come back to the new spot.
 		/// </summary>
@@ -1999,7 +2022,7 @@ namespace StageManager
 			int y = wa.Top + (wa.Height - h) / 2;
 			Log.Action($"Stack all like '{model.Title}': {w}x{h} at ({x},{y})");
 
-			foreach (var win in SceneManager.GetSceneableWindowsOnCurrentDesktop())
+			foreach (var win in SceneManager.GetSceneableWindowsSnapshot())
 			{
 				var hwnd = win.Handle;
 				if (Win32.IsIconic(hwnd))
