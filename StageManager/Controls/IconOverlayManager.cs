@@ -52,6 +52,9 @@ namespace StageManager.Controls
 
         public Action<string>? OnIconClicked { get; set; }
 
+        /// <summary>Left click on an icon: switch to that icon's scene.</summary>
+        public Action<SceneModel>? OnIconSwitch { get; set; }
+
         // Setter side effect: while filter is active, freeze the icon strip — no hover, no click,
         // no cursor change. IsHitTestVisible=false silences MouseEnter/Leave/LeftButtonUp and
         // Cursors.Hand all at once. Also defeats the per-frame WS_EX_TRANSPARENT toggle in
@@ -248,10 +251,18 @@ namespace StageManager.Controls
 
             var sceneTitle = scene.Title;
             var windowTitle = scene.Windows[idx].Title;
+            // Left click switches to the app, like clicking its tile — that's what everyone
+            // expects of an app icon. The per-app filter moved to right click.
             image.MouseLeftButtonUp += (_, e) =>
             {
                 e.Handled = true;
-                Log.Info("FILTER", $"icon clicked: scene='{sceneTitle}' processKey='{processKey}' iconIndex={idx} window='{windowTitle}'");
+                Log.Info("FILTER", $"icon clicked (switch): scene='{sceneTitle}' window='{windowTitle}'");
+                OnIconSwitch?.Invoke(scene);
+            };
+            image.MouseRightButtonUp += (_, e) =>
+            {
+                e.Handled = true;
+                Log.Info("FILTER", $"icon right-clicked (filter): scene='{sceneTitle}' processKey='{processKey}' iconIndex={idx} window='{windowTitle}'");
                 OnIconClicked?.Invoke(processKey);
             };
             image.MouseEnter += (_, _) => AnimateScale(hover, 1.15, HoverDuration);

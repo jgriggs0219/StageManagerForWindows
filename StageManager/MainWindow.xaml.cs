@@ -154,6 +154,7 @@ namespace StageManager
 			});
 
 			_iconOverlay.OnIconClicked = ToggleAppFilter;
+			_iconOverlay.OnIconSwitch = model => SwitchSceneCommand.Execute(model);
 		}
 
 		private void ToggleAppFilter(string processKey)
