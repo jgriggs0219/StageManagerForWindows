@@ -17,7 +17,7 @@ namespace StageManager.Services
 	public sealed class UpdateService : IDisposable
 	{
 		private const string ReleasesUrl =
-			"https://api.github.com/repos/depoledna/StageManagerForWindows/releases/latest";
+			"https://api.github.com/repos/jgriggs0219/StageManagerForWindows/releases/latest";
 
 		internal static readonly string StagingFolder = Path.Combine(
 			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

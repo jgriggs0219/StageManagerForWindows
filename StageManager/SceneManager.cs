@@ -351,7 +351,7 @@ namespace StageManager
 
 		private void WindowsManager_DesktopShortClick(object? sender, IntPtr handle)
 		{
-			if (_suspend)
+			if (_suspend || !StageManager.Services.Settings.GetClickDesktopToShowDesktop())
 				return;
 
 			if (IsAppFilterActive?.Invoke() == true)

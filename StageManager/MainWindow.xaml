@@ -213,6 +213,28 @@
                         Header="Hide desktop icons"
                         IsCheckable="True"
                         IsChecked="{Binding HideDesktopIcons, Mode=TwoWay}" />
+                    <MenuItem
+                        x:Name="menuClickDesktop"
+                        Style="{StaticResource TrayMenuItemStyle}"
+                        Header="Click desktop to show desktop"
+                        Click="MenuItem_ClickDesktop_Click" />
+                    <Separator Style="{StaticResource TrayMenuSeparatorStyle}" />
+                    <MenuItem
+                        Style="{StaticResource TrayMenuLabelStyle}"
+                        Header="Animation speed" />
+                    <MenuItem x:Name="menuAnimOff" Style="{StaticResource TrayMenuItemStyle}" Header="Off (instant)" Tag="0" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimFast" Style="{StaticResource TrayMenuItemStyle}" Header="Fast" Tag="180" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimNormal" Style="{StaticResource TrayMenuItemStyle}" Header="Normal" Tag="300" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimSlow" Style="{StaticResource TrayMenuItemStyle}" Header="Slow" Tag="500" Click="MenuItem_AnimSpeed_Click" />
+                    <Separator Style="{StaticResource TrayMenuSeparatorStyle}" />
+                    <MenuItem
+                        Style="{StaticResource TrayMenuLabelStyle}"
+                        Header="Recent apps in sidebar" />
+                    <MenuItem x:Name="menuScenes3" Style="{StaticResource TrayMenuItemStyle}" Header="3" Tag="3" Click="MenuItem_MaxScenes_Click" />
+                    <MenuItem x:Name="menuScenes4" Style="{StaticResource TrayMenuItemStyle}" Header="4" Tag="4" Click="MenuItem_MaxScenes_Click" />
+                    <MenuItem x:Name="menuScenes5" Style="{StaticResource TrayMenuItemStyle}" Header="5" Tag="5" Click="MenuItem_MaxScenes_Click" />
+                    <MenuItem x:Name="menuScenes6" Style="{StaticResource TrayMenuItemStyle}" Header="6" Tag="6" Click="MenuItem_MaxScenes_Click" />
+                    <MenuItem x:Name="menuScenes8" Style="{StaticResource TrayMenuItemStyle}" Header="8" Tag="8" Click="MenuItem_MaxScenes_Click" />
                     <Separator Style="{StaticResource TrayMenuSeparatorStyle}" />
                     <MenuItem
                         Style="{StaticResource TrayMenuItemStyle}"

@@ -12,7 +12,6 @@ namespace StageManager.Animations
 {
 	internal class SceneTransitionAnimator : IDisposable
 	{
-		private const int AnimationDurationMs = 300;
 
 		// Composition frames the cards get to become presentable before the caller is
 		// allowed to hide anything real. The first tick covers the overlay's own commit;
@@ -220,7 +219,7 @@ namespace StageManager.Animations
 		}
 
 		/// <summary>
-		/// Drives both cards from a per-frame rendering tick over <see cref="AnimationDurationMs"/>.
+		/// Drives both cards from a per-frame rendering tick over the user-set animation duration.
 		/// A Storyboard can move the host rect but can't animate the perspective matrix,
 		/// so size + 3D tilt are interpolated here and pushed to the live session each frame.
 		/// </summary>
@@ -235,7 +234,7 @@ namespace StageManager.Animations
 		{
 			var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 			var easing = new PowerEase { EasingMode = EasingMode.EaseOut };
-			double durationMs = AnimationDurationMs;
+			double durationMs = Math.Max(1, StageManager.Services.Settings.GetAnimationDurationMs());
 			TimeSpan? start = null;
 			EventHandler? handler = null;
 

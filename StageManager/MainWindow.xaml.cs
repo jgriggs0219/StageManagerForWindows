@@ -32,7 +32,7 @@ namespace StageManager
 	public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		private const int TIMERINTERVAL_MILLISECONDS = 500;
-		private const int MAX_SCENES = 5;
+		private static int MAX_SCENES => Settings.GetMaxScenes();
 		// Resting look of the tray, measured off macOS 26.5.2 to within
 		// 0.2 pt RMS over 16 corners: every horizontal card edge tilts by
 		// atan((yEdge - screenCenterY) / d), positive = right end rises, where
@@ -270,7 +270,7 @@ namespace StageManager
 					() => outgoingTile?.Session?.HasFrame ?? true, "outgoing tray tile");
 			}
 
-			if (sidebarSlot != Rect.Empty && incomingTarget != Rect.Empty)
+			if (Settings.GetAnimationDurationMs() > 0 && sidebarSlot != Rect.Empty && incomingTarget != Rect.Empty)
 			{
 				Log.Info("TRANSITION", "Starting animation");
 					var incomingTile = FindSceneThumbnail(sceneModel, sceneModel.Windows.FirstOrDefault()?.Handle ?? IntPtr.Zero);
@@ -1640,7 +1640,7 @@ namespace StageManager
 
 		private void NavigateToProjectPage()
 		{
-			Process.Start(new ProcessStartInfo("https://github.com/awaescher/StageManager")
+			Process.Start(new ProcessStartInfo("https://github.com/jgriggs0219/StageManagerForWindows")
 			{
 				UseShellExecute = true
 			});
@@ -1799,6 +1799,39 @@ namespace StageManager
 		private void ContextMenu_Opened(object sender, RoutedEventArgs e)
 		{
 			_trayMenuOpen = true;
+			RefreshSettingsMenuChecks();
+		}
+
+		private void RefreshSettingsMenuChecks()
+		{
+			menuClickDesktop.IsChecked = Settings.GetClickDesktopToShowDesktop();
+
+			var ms = Settings.GetAnimationDurationMs();
+			foreach (var item in new[] { menuAnimOff, menuAnimFast, menuAnimNormal, menuAnimSlow })
+				item.IsChecked = int.Parse((string)item.Tag) == ms;
+
+			var max = Settings.GetMaxScenes();
+			foreach (var item in new[] { menuScenes3, menuScenes4, menuScenes5, menuScenes6, menuScenes8 })
+				item.IsChecked = int.Parse((string)item.Tag) == max;
+		}
+
+		private void MenuItem_ClickDesktop_Click(object sender, RoutedEventArgs e)
+		{
+			Settings.SetClickDesktopToShowDesktop(!Settings.GetClickDesktopToShowDesktop());
+			RefreshSettingsMenuChecks();
+		}
+
+		private void MenuItem_AnimSpeed_Click(object sender, RoutedEventArgs e)
+		{
+			Settings.SetAnimationDurationMs(int.Parse((string)((MenuItem)sender).Tag));
+			RefreshSettingsMenuChecks();
+		}
+
+		private void MenuItem_MaxScenes_Click(object sender, RoutedEventArgs e)
+		{
+			Settings.SetMaxScenes(int.Parse((string)((MenuItem)sender).Tag));
+			RefreshSettingsMenuChecks();
+			SyncVisibilityByUpdatedTimeStamp();
 		}
 	}
 

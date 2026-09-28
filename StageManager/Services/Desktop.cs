@@ -22,65 +22,94 @@ namespace StageManager.Services
 
 		private const int WM_COMMAND = 0x111;
 
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		static extern bool PostMessage(IntPtr hWnd, UInt32 Msg, IntPtr wParam, IntPtr lParam);
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		static extern bool IsWindowVisible(IntPtr hWnd);
+
+		private static readonly IntPtr ToggleDesktopCommand = new IntPtr(0x7402);
+
+		// The toggle is posted, not sent, so Explorer applies it a moment later. Until it
+		// does, the icon view still reports the old state — remember what was asked for so
+		// a quick Hide→Show→Hide doesn't read stale state and toggle the wrong way.
+		private readonly object _lock = new();
+		private bool? _expected;
+		private DateTime _expectedAt;
+		private static readonly TimeSpan ExpectedTimeout = TimeSpan.FromSeconds(1.5);
+
+		/// <summary>
+		/// Reads the live state of the desktop icon list view. The registry value
+		/// Explorer\Advanced\HideIcons is only written lazily by Explorer, so reading it
+		/// right after a toggle returned the old state and the next toggle went the wrong
+		/// way — which is how icons ended up never coming back.
+		/// </summary>
 		public bool GetDesktopIconsVisible()
 		{
+			var shellView = GetDesktopSHELLDLL_DefView();
+			var listView = shellView != IntPtr.Zero ? FindWindowEx(shellView, IntPtr.Zero, "SysListView32", null) : IntPtr.Zero;
+			if (listView != IntPtr.Zero)
+				return IsWindowVisible(listView);
+
 			using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: false);
 			if (key?.GetValue("HideIcons", 0) is int hideIconsValue)
 				return hideIconsValue == 0;
 
-			return false;
+			return true;
 		}
 
-		private void ToggleDesktopIcons()
+		private void SetIconsVisible(bool visible, string caller)
 		{
-			var shellView = GetDesktopSHELLDLL_DefView();
-			Log.Info("DESKTOP", $"ToggleDesktopIcons: SHELLDLL_DefView handle=0x{shellView:X}");
-			if (shellView == IntPtr.Zero)
+			lock (_lock)
 			{
-				Log.Info("DESKTOP", "ToggleDesktopIcons: SHELLDLL_DefView not found, toggle skipped");
-				return;
+				var actual = GetDesktopIconsVisible();
+				if (_expected.HasValue && (actual == _expected.Value || DateTime.UtcNow - _expectedAt > ExpectedTimeout))
+					_expected = null;
+
+				if ((_expected ?? actual) == visible)
+					return;
+
+				var shellView = GetDesktopSHELLDLL_DefView();
+				if (shellView == IntPtr.Zero)
+				{
+					Log.Info("DESKTOP", $"{caller}: SHELLDLL_DefView not found, toggle skipped");
+					return;
+				}
+
+				// Posted, not sent: SendMessage blocked the UI thread while Explorer re-laid-out
+				// the whole desktop, which landed mid scene-transition as a visible hitch.
+				if (PostMessage(shellView, WM_COMMAND, ToggleDesktopCommand, IntPtr.Zero))
+				{
+					_expected = visible;
+					_expectedAt = DateTime.UtcNow;
+					Log.Info("DESKTOP", $"{caller}: toggled {(visible ? "on" : "off")}");
+				}
 			}
-			var toggleDesktopCommand = new IntPtr(0x7402);
-			SendMessage(shellView, WM_COMMAND, toggleDesktopCommand, IntPtr.Zero);
 		}
 
 		/// <summary>
 		/// Ensures desktop icons are toggled ON (shell-level).
 		/// Call at startup for crash recovery.
 		/// </summary>
-		public void EnsureIconsExist()
-		{
-			if (!GetDesktopIconsVisible())
-			{
-				Log.Info("DESKTOP", "EnsureIconsExist: icons were toggled off, restoring");
-				ToggleDesktopIcons();
-			}
-		}
+		public void EnsureIconsExist() => SetIconsVisible(true, "EnsureIconsExist");
 
-		public void ShowIcons()
-		{
-			if (!GetDesktopIconsVisible())
-			{
-				ToggleDesktopIcons();
-				Log.Info("DESKTOP", "ShowIcons: toggled on");
-			}
-		}
+		public void ShowIcons() => SetIconsVisible(true, "ShowIcons");
 
-		public void HideIcons(bool animate = true)
-		{
-			if (GetDesktopIconsVisible())
-			{
-				ToggleDesktopIcons();
-				Log.Info("DESKTOP", "HideIcons: toggled off");
-			}
-		}
+		public void HideIcons(bool animate = true) => SetIconsVisible(false, "HideIcons");
 
 		/// <summary>
-		/// Restore icons visibility. Call on app shutdown.
+		/// Restore icons visibility. Call on app shutdown. Sent synchronously here —
+		/// a posted toggle can be dropped if the process exits before Explorer handles it.
 		/// </summary>
 		public void RestoreIcons()
 		{
-			ShowIcons();
+			if (GetDesktopIconsVisible()) return;
+			var shellView = GetDesktopSHELLDLL_DefView();
+			if (shellView == IntPtr.Zero) return;
+			SendMessage(shellView, WM_COMMAND, ToggleDesktopCommand, IntPtr.Zero);
+			Log.Info("DESKTOP", "RestoreIcons: toggled on");
 		}
 
 		static IntPtr GetDesktopSHELLDLL_DefView()
