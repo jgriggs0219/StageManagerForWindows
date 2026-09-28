@@ -16,7 +16,7 @@ namespace StageManager.Services
 		{
 			// Legacy: old versions stored bool as REG_SZ — reader always fell through to default true.
 			// Treat legacy strings the same way so existing users keep their expected behavior.
-			return GetInt("HideDesktopIcons", 1) != 0;
+			return GetInt("HideDesktopIcons", 0) != 0;
 		}
 
 		/// <summary>Scene switch animation length. 0 = no animation (instant switch).</summary>

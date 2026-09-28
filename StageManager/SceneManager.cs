@@ -33,11 +33,6 @@ namespace StageManager
 		// RestoreMinimizedInvisibly would drag it back on the next scene switch.
 		private readonly HashSet<IntPtr> _userMinimized = new HashSet<IntPtr>();
 
-		// Last known "is on the current virtual desktop" answer per tracked window. A window
-		// that still exists but flips its answer means the user switched virtual desktops
-		// (or moved the window to another one) — see CheckVirtualDesktopChanged.
-		private readonly Dictionary<IntPtr, bool> _onCurrentDesktop = new Dictionary<IntPtr, bool>();
-
 		/// <summary>Raised on the UI thread after a virtual desktop switch was handled.</summary>
 		public event EventHandler? VirtualDesktopChanged;
 
@@ -99,7 +94,9 @@ namespace StageManager
 
 			// Ensure icons exist (shell-level) so the SysListView32 is available for alpha fading.
 			// If previous session crashed, icons may have been toggled off — restore them.
-			_desktop.EnsureIconsExist();
+			// Only when the feature is on — otherwise desktop icons are the user's business entirely.
+			if (_hideDesktopIcons)
+				_desktop.EnsureIconsExist();
 
 			if (_hideDesktopIcons)
 				_desktop.HideIcons(animate: false);
@@ -162,11 +159,17 @@ namespace StageManager
 
 			// A virtual desktop switch cloaks/uncloaks every window and moves the foreground.
 			// None of that is the user rearranging scenes: while the switch settles, drop the
-			// event storm and let the deferred desktop check apply one instant stage change.
+			// event storm; PollVirtualDesktop and its settle follow-up stage the result.
 			if ((type == WindowUpdateType.Foreground || type == WindowUpdateType.Show) && IsDesktopSwitchSettling)
 			{
-				Log.Window("VDESK", $"{type} during desktop switch, deferring", window);
-				QueueDesktopCheck();
+				Log.Window("VDESK", $"{type} during desktop switch, ignoring", window);
+				return;
+			}
+
+			// Belt and braces: events for windows on other desktops are never staging requests.
+			if ((type == WindowUpdateType.Foreground || type == WindowUpdateType.Show) && !VirtualDesktop.IsOnCurrentDesktop(window.Handle))
+			{
+				Log.Window("VDESK", $"{type} on window from another desktop, ignoring", window);
 				return;
 			}
 
@@ -186,9 +189,13 @@ namespace StageManager
 				// the user never picked — and would immediately undo the stow below.
 				// Time-based guards do not work here: WinEvents are queued behind our own
 				// hook callback, so they land after any flag we could raise has dropped.
-				if (OpacityWindowStrategy.TryGetOriginalPosition(window.Handle, out _, out _))
+				// Outside that hand-off window, though, a parked window coming to the foreground
+				// is the user asking for it — a taskbar click, Alt+Tab, a notification. Ignoring
+				// those is what made apps "not open" while Stage Manager was running.
+				if (OpacityWindowStrategy.TryGetOriginalPosition(window.Handle, out _, out _)
+					&& DateTime.UtcNow - _lastFocusHandoffAt < FocusHandoffWindow)
 				{
-					Log.Window("FOCUS", "Foreground on parked window, ignoring", window);
+					Log.Window("FOCUS", "Foreground on parked window right after minimize/close, ignoring", window);
 					return;
 				}
 
@@ -279,6 +286,7 @@ namespace StageManager
 		/// </summary>
 		private void OnWindowMinimized(IWindow window)
 		{
+			_lastFocusHandoffAt = DateTime.UtcNow;
 			if (_suspend || IsPersistentWindow(window))
 				return;
 
@@ -408,6 +416,8 @@ namespace StageManager
 		private void WindowsManager_WindowDestroyed(IWindow window)
 		{
 			Log.Window("EVENT", "WindowDestroyed", window);
+			_lastFocusHandoffAt = DateTime.UtcNow;
+			VirtualDesktop.Forget(window.Handle);
 
 			OpacityWindowStrategy.CleanupWindow(window.Handle);
 			ForgetZOrder(window.Handle);
@@ -504,44 +514,27 @@ namespace StageManager
 			SwitchToSceneByNewWindow(window, allowSwitch: !IsDesktopSwitchSettling).SafeFireAndForget();
 		}
 
-		// How long after the last shell cloak/uncloak a desktop switch counts as in progress.
-		private static readonly TimeSpan DesktopSwitchSettle = TimeSpan.FromMilliseconds(500);
+		// Desktop-switch state. The registry says which desktop is showing (PollVirtualDesktop);
+		// the shell cloak storm says a switch is still settling.
+		private static readonly TimeSpan DesktopSwitchSettle = TimeSpan.FromMilliseconds(400);
 		private DateTime _desktopSwitchSettleUntil = DateTime.MinValue;
-		private bool _desktopCheckQueued;
+		private Guid _knownDesktop = Guid.Empty;
+		private readonly Dictionary<Guid, Scene?> _stageByDesktop = new Dictionary<Guid, Scene?>();
+		private bool _settleFollowUpQueued;
+		private int _desktopRefreshTick;
+
+		// When a window last left the stage by minimize/close. Windows then hands the
+		// foreground to the next window in z-order, which may be a parked one — that
+		// activation is not the user's and must not switch scenes.
+		private DateTime _lastFocusHandoffAt = DateTime.MinValue;
+		private static readonly TimeSpan FocusHandoffWindow = TimeSpan.FromMilliseconds(600);
 
 		private bool IsDesktopSwitchSettling => DateTime.UtcNow < _desktopSwitchSettleUntil;
 
-		// Runs inside the WinEvent callback: no COM, no window work — just note and defer.
+		// Runs inside the WinEvent callback: no COM, no window work — just note it.
 		private void WindowsManager_ShellCloakChanged()
 		{
 			_desktopSwitchSettleUntil = DateTime.UtcNow + DesktopSwitchSettle;
-			QueueDesktopCheck();
-		}
-
-		/// <summary>
-		/// Runs <see cref="CheckVirtualDesktopChanged"/> from the dispatcher, outside any
-		/// WinEvent callback — the shell's desktop COM calls fail inside one (input-synchronous
-		/// call), which is why the check never fired when it ran from the hook. Checks early for
-		/// a snappy stage change, then again once the switch has settled.
-		/// </summary>
-		private void QueueDesktopCheck()
-		{
-			if (_desktopCheckQueued) return;
-			var dispatcher = Application.Current?.Dispatcher;
-			if (dispatcher is null) return;
-			_desktopCheckQueued = true;
-			dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(async () =>
-			{
-				try
-				{
-					await Task.Delay(60);
-					CheckVirtualDesktopChanged();
-					while (IsDesktopSwitchSettling)
-						await Task.Delay(100);
-					CheckVirtualDesktopChanged();
-				}
-				finally { _desktopCheckQueued = false; }
-			}));
 		}
 
 		private async Task SwitchToSceneByWindow(IWindow window)
@@ -690,51 +683,103 @@ namespace StageManager
 		}
 
 		/// <summary>
-		/// True when any tracked window flipped between "on the current virtual desktop" and
-		/// not since the last check — i.e. the user switched desktops. Handles the switch
-		/// (instant, no animation) before returning. Call on the UI thread; MainWindow also
-		/// polls it so switching to an empty desktop, which raises no window events, is caught.
+		/// Called by MainWindow's dispatcher timer (~75 ms). Explorer updates the current
+		/// desktop in the registry the instant a switch starts, so this is both fast and
+		/// reliable — unlike asking the shell per window from inside WinEvent callbacks.
 		/// </summary>
-		public bool CheckVirtualDesktopChanged()
+		public void PollVirtualDesktop()
 		{
-			var flipped = false;
-			var seen = new HashSet<IntPtr>();
-			// Snapshot first: the COM call below pumps messages, and window events handled
-			// during it mutate the window list being enumerated.
-			foreach (var w in GetSceneableWindows().ToArray())
+			var now = VirtualDesktop.CurrentDesktopId;
+			if (now == Guid.Empty)
+				return;
+
+			if (_knownDesktop == Guid.Empty)
 			{
-				seen.Add(w.Handle);
-				var on = VirtualDesktop.IsOnCurrentDesktop(w.Handle);
-				if (_onCurrentDesktop.TryGetValue(w.Handle, out var was) && was != on)
-					flipped = true;
-				_onCurrentDesktop[w.Handle] = on;
+				_knownDesktop = now;
+				return;
 			}
-			foreach (var gone in _onCurrentDesktop.Keys.Where(h => !seen.Contains(h)).ToArray())
-				_onCurrentDesktop.Remove(gone);
 
-			if (!flipped)
-				return false;
+			if (now != _knownDesktop)
+			{
+				var old = _knownDesktop;
+				_knownDesktop = now;
+				_desktopSwitchSettleUntil = DateTime.UtcNow + DesktopSwitchSettle;
+				HandleVirtualDesktopChanged(old, now);
+				QueueSettleFollowUp();
+				return;
+			}
 
-			HandleVirtualDesktopChanged();
-			return true;
+			// Every ~2 s re-ask where windows live: the user can move them in Task View.
+			if (++_desktopRefreshTick % 26 == 0)
+			{
+				var handles = GetSceneableWindows().ToArray().Select(w => w.Handle).ToArray();
+				if (VirtualDesktop.Refresh(handles))
+					VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
+			}
 		}
 
-		private void HandleVirtualDesktopChanged()
+		private void HandleVirtualDesktopChanged(Guid oldDesktop, Guid newDesktop)
 		{
-			bool OnHere(Scene s) => IsSceneOnCurrentDesktop(s);
+			// Remember what was on stage where the user is leaving, to restore on return.
+			_stageByDesktop[oldDesktop] = _current;
 
 			Scene[] scenes;
 			lock (_scenesLock)
 				scenes = _scenes.ToArray();
 
-			// Windows re-activates the last-used window of the desktop being entered, which is
-			// the one that was on stage when the user left it. Fall back to any scene here.
-			var fg = Win32.GetForegroundWindow();
-			var target = scenes.FirstOrDefault(s => s.Windows.ToArray().Any(w => w.Handle == fg) && OnHere(s))
-				?? (_current is not null && OnHere(_current) ? _current : null)
-				?? scenes.FirstOrDefault(OnHere);
+			_stageByDesktop.TryGetValue(newDesktop, out var saved);
+			// No remembered stage (first visit this session): don't guess — staging a guess and
+			// then correcting it is a flicker. Clear the stage; the settle follow-up stages
+			// whatever window Windows activates on arrival.
+			var target = saved is not null && scenes.Contains(saved) && IsSceneOnCurrentDesktop(saved) ? saved : null;
 
-			Log.Info("VDESK", $"Virtual desktop switched → stage '{target?.Title ?? "(empty desktop)"}'");
+			Log.Info("VDESK", $"Desktop {VirtualDesktop.Short(oldDesktop)} → {VirtualDesktop.Short(newDesktop)}, stage '{target?.Title ?? "(empty desktop)"}'");
+			StageInstantly(target);
+		}
+
+		/// <summary>
+		/// After the switch settles, the foreground window is whatever Windows chose to
+		/// activate — the one a notification click asked for, or the last-used window of
+		/// that desktop. If it belongs to a different scene here, that scene takes the stage.
+		/// </summary>
+		private void QueueSettleFollowUp()
+		{
+			if (_settleFollowUpQueued) return;
+			var dispatcher = Application.Current?.Dispatcher;
+			if (dispatcher is null) return;
+			_settleFollowUpQueued = true;
+			dispatcher.BeginInvoke(new Action(async () =>
+			{
+				try
+				{
+					while (IsDesktopSwitchSettling)
+						await Task.Delay(50);
+
+					var fg = Win32.GetForegroundWindow();
+					Scene[] scenes;
+					lock (_scenesLock)
+						scenes = _scenes.ToArray();
+					var fgScene = scenes.FirstOrDefault(s => s.Windows.ToArray().Any(w => w.Handle == fg));
+					if (fgScene is not null && !ReferenceEquals(fgScene, _current) && IsSceneOnCurrentDesktop(fgScene))
+					{
+						Log.Info("VDESK", $"Settled: foreground is '{fgScene.Title}' → staging it");
+						StageInstantly(fgScene);
+					}
+				}
+				finally { _settleFollowUpQueued = false; }
+			}));
+		}
+
+		/// <summary>
+		/// Puts <paramref name="target"/> on stage without animation, touching only windows
+		/// on the current desktop. Used for desktop switches, where the OS is already
+		/// animating and a Stage Manager transition on top is what read as flashing.
+		/// </summary>
+		private void StageInstantly(Scene? target)
+		{
+			Scene[] scenes;
+			lock (_scenesLock)
+				scenes = _scenes.ToArray();
 
 			var prior = _current;
 			_current = target;
@@ -744,12 +789,10 @@ namespace StageManager
 
 			if (target is not null)
 			{
-				// Windows first seen during this switch were bound without being staged; park
-				// whatever on this desktop isn't the target, as a normal scene switch would.
+				var targetWindows = target.Windows.ToArray();
 				var here = GetSceneableWindows().ToArray()
 					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
 					.ToArray();
-				var targetWindows = target.Windows.ToArray();
 				foreach (var w in here.Except(targetWindows))
 					WindowStrategy.Hide(w);
 				foreach (var w in targetWindows.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
@@ -1256,7 +1299,8 @@ namespace StageManager
 		//
 		// This fulfils the requirement that launching a new program should ALWAYS
 		// create a separate scene.
-		private string GetWindowGroupKey(IWindow window) => window.ProcessId.ToString();
+		// One scene per app per virtual desktop: Chrome on two desktops is two scenes.
+		private string GetWindowGroupKey(IWindow window) => $"{window.ProcessId}@{VirtualDesktop.DesktopOf(window.Handle)}";
 
 		public void Dispose()
 		{

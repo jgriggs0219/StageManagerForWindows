@@ -391,12 +391,12 @@ namespace StageManager
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
 			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); RefreshIconOverlay(); };
 
-			// Switching to an empty virtual desktop raises no window events, so poll for it.
-			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+			// Explorer updates the current desktop in the registry the instant a switch starts.
+			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(75) };
 			_desktopPollTimer.Tick += (_, _) =>
 			{
 				if (!_sceneTransitionAnimator.IsAnimating)
-					SceneManager.CheckVirtualDesktopChanged();
+					SceneManager.PollVirtualDesktop();
 			};
 			_desktopPollTimer.Start();
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
