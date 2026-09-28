@@ -1002,9 +1002,9 @@ namespace StageManager
 		private void SyncVisibilityByUpdatedTimeStamp()
 		{
 			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
+			foreach (var off in Scenes.ToArray().Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
 				off.IsVisible = false;
-			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
+			var scenes = Scenes.ToArray().Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 
 			if (_filterProcessKey == null)
 			{
@@ -1089,9 +1089,9 @@ namespace StageManager
 			var iconGen = ++_filterIconGen;
 
 			// Only scenes with a window on the current virtual desktop belong in the sidebar.
-			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
+			foreach (var off in Scenes.ToArray().Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)).ToArray())
 				off.IsVisible = false;
-			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
+			var scenes = Scenes.ToArray().Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 			bool[] target = new bool[scenes.Length];
 			if (_filterProcessKey == null)
 			{

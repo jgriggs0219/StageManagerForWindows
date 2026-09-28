@@ -649,7 +649,9 @@ namespace StageManager
 		{
 			var flipped = false;
 			var seen = new HashSet<IntPtr>();
-			foreach (var w in GetSceneableWindows())
+			// Snapshot first: the COM call below pumps messages, and window events handled
+			// during it mutate the window list being enumerated.
+			foreach (var w in GetSceneableWindows().ToArray())
 			{
 				seen.Add(w.Handle);
 				var on = VirtualDesktop.IsOnCurrentDesktop(w.Handle);
@@ -669,7 +671,7 @@ namespace StageManager
 
 		private void HandleVirtualDesktopChanged()
 		{
-			bool OnHere(Scene s) => s.Windows.Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
+			bool OnHere(Scene s) => IsSceneOnCurrentDesktop(s);
 
 			Scene[] scenes;
 			lock (_scenesLock)
@@ -678,7 +680,7 @@ namespace StageManager
 			// Windows re-activates the last-used window of the desktop being entered, which is
 			// the one that was on stage when the user left it. Fall back to any scene here.
 			var fg = Win32.GetForegroundWindow();
-			var target = scenes.FirstOrDefault(s => s.Windows.Any(w => w.Handle == fg) && OnHere(s))
+			var target = scenes.FirstOrDefault(s => s.Windows.ToArray().Any(w => w.Handle == fg) && OnHere(s))
 				?? (_current is not null && OnHere(_current) ? _current : null)
 				?? scenes.FirstOrDefault(OnHere);
 
@@ -691,7 +693,7 @@ namespace StageManager
 				s.IsSelected = ReferenceEquals(s, target);
 
 			if (target is not null)
-				foreach (var w in target.Windows.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
+				foreach (var w in target.Windows.ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
 					WindowStrategy.Show(w);
 
 			CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
@@ -700,7 +702,7 @@ namespace StageManager
 
 		/// <summary>True when the scene has at least one window on the current virtual desktop.</summary>
 		public static bool IsSceneOnCurrentDesktop(Scene scene) =>
-			scene.Windows.Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
+			scene.Windows.ToArray().Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
 
 		public async Task<bool> SwitchTo(Scene? scene)
 		{
@@ -728,6 +730,7 @@ namespace StageManager
 				var otherWindows = GetSceneableWindows()
 					.Except(scene?.Windows ?? Array.Empty<IWindow>())
 					.Where(w => scene is null || w.Handle != foregroundHandle)
+					.ToArray()
 					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
 					.ToArray();
 
