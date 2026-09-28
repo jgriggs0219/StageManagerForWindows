@@ -402,6 +402,7 @@ namespace StageManager
 		private void WindowsManager_WindowDestroyed(IWindow window)
 		{
 			Log.Window("EVENT", "WindowDestroyed", window);
+			AppGroups.ForgetWindow(window.Handle);
 			_lastFocusHandoffAt = DateTime.UtcNow;
 
 			OpacityWindowStrategy.CleanupWindow(window.Handle);
@@ -757,6 +758,64 @@ namespace StageManager
 			}
 
 			return true;
+		}
+
+		/// <summary>
+		/// Re-sorts windows into scenes after group membership changed (AppGroups.Changed, a
+		/// new window, a title that now matches a rule). A scene is one app within one group,
+		/// so a Chrome window moved to its own group splits off into its own tile. The stage
+		/// is left as the user sees it: a window on stage stays on stage.
+		/// </summary>
+		public void RegroupWindows()
+		{
+			foreach (var window in GetSceneableWindows().ToArray())
+			{
+				var source = FindSceneForWindow(window);
+				if (source is null)
+					continue;
+				var key = GetWindowGroupKey(window);
+				if (string.Equals(source.Key, key, StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				var target = FindSceneForProcess(key);
+				var created = target is null;
+				target ??= new Scene(key);
+
+				Log.Window("GROUPS", $"Regroup '{source.Key}' → '{key}'", window);
+				source.Remove(window);
+				target.Add(window);
+				if (created)
+				{
+					lock (_scenesLock)
+						_scenes.Add(target);
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(target, window, ChangeType.Created));
+				}
+				else
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(target, window, ChangeType.Updated));
+
+				var sourceEmpty = !source.Windows.Any();
+				if (sourceEmpty)
+				{
+					lock (_scenesLock)
+						_scenes.Remove(source);
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(source, window, ChangeType.Removed));
+				}
+				else
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(source, window, ChangeType.Updated));
+
+				if (ReferenceEquals(source, _current))
+				{
+					if (sourceEmpty)
+					{
+						// The whole stage moved groups: the new scene is what's on stage now.
+						_current = target;
+						target.IsSelected = true;
+						CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(source, target));
+					}
+					else if (!ReferenceEquals(target, _current))
+						WindowStrategy.Hide(window);
+				}
+			}
 		}
 
 		public Task MoveWindow(Scene sourceScene, IWindow window, Scene targetScene)
@@ -1124,7 +1183,9 @@ namespace StageManager
 		//
 		// This fulfils the requirement that launching a new program should ALWAYS
 		// create a separate scene.
-		private string GetWindowGroupKey(IWindow window) => window.ProcessId.ToString();
+		// One scene per app per user group: a Chrome window given its own group gets its own tile.
+		private string GetWindowGroupKey(IWindow window) =>
+			$"{window.ProcessId}#{AppGroups.GetWindowGroup(window.Handle, window.ProcessFileName, window.Title)}";
 
 		public void Dispose()
 		{

@@ -314,7 +314,8 @@ namespace StageManager.Model
 		/// <summary>Re-reads group membership after AppGroups changed or windows changed.</summary>
 		public void RefreshGroup()
 		{
-			GroupName = Services.AppGroups.GetGroup(ProcessKey);
+			var w = Windows.FirstOrDefault()?.Window;
+			GroupName = w is null ? "" : Services.AppGroups.GetWindowGroup(w.Handle, w.ProcessFileName, w.Title);
 			GroupOrder = Services.AppGroups.GetOrder(GroupName);
 		}
 

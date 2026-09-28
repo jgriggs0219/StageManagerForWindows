@@ -1859,10 +1859,80 @@ namespace StageManager
 
 			Services.AppGroups.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
 			{
+				SceneManager?.RegroupWindows();
 				SyncVisibilityByUpdatedTimeStamp();
 				view.Refresh();
 				RefreshIconOverlay();
 			}));
+
+			// Title rules follow window titles, which change as tabs change: re-check every 2 s.
+			// A no-op unless some window's group actually changed.
+			var regroupTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+			regroupTimer.Tick += (_, _) =>
+			{
+				if (SceneManager is null || _sceneTransitionAnimator.IsAnimating || IsSidebarDragging || Services.AppGroups.Rules.Count == 0)
+					return;
+				SceneManager.RegroupWindows();
+			};
+			regroupTimer.Start();
+		}
+
+		/// <summary>
+		/// "Move a window to a group" dialog: pick one of the tile's windows, pick or type a
+		/// group, and optionally remember it by title so it lands there after restarts.
+		/// </summary>
+		private void ShowMoveWindowDialog(SceneModel model)
+		{
+			var windows = model.Windows.Select(w => w.Window).Where(w => w is not null).ToList();
+			if (windows.Count == 0) return;
+
+			Brush fg = Brushes.White;
+			Brush fieldBg = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B));
+			TextBlock Label(string t) => new TextBlock { Text = t, Foreground = Brushes.Gainsboro, Margin = new Thickness(0, 10, 0, 4) };
+
+			var windowBox = new ComboBox { ItemsSource = windows.Select(w => w!.Title).ToList(), SelectedIndex = 0, MinWidth = 360 };
+			var groupBox = new ComboBox { IsEditable = true, ItemsSource = Services.AppGroups.Groups.ToList(), MinWidth = 360 };
+			groupBox.Text = model.GroupName.Length > 0 ? model.GroupName : Services.AppGroups.Groups.FirstOrDefault() ?? "";
+			var remember = new CheckBox { Content = "Remember after restarts: this app's windows whose title contains", Foreground = fg, Margin = new Thickness(0, 14, 0, 4), IsChecked = true };
+			var containsBox = new TextBox { Background = fieldBg, Foreground = fg, CaretBrush = fg, Padding = new Thickness(6, 3, 6, 3) };
+
+			// Suggest the part of the title before " - " (Chrome: the tab/site name).
+			string Suggest(string? title) => (title ?? "").Split(" - ")[0].Trim();
+			containsBox.Text = Suggest(windows[0]!.Title);
+			windowBox.SelectionChanged += (_, _) => containsBox.Text = Suggest(windows[Math.Max(0, windowBox.SelectedIndex)]!.Title);
+
+			var ok = new Button { Content = "Move", IsDefault = true, Width = 90, Margin = new Thickness(0, 16, 8, 0) };
+			var cancel = new Button { Content = "Cancel", IsCancel = true, Width = 90, Margin = new Thickness(0, 16, 0, 0) };
+			var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+			buttons.Children.Add(ok); buttons.Children.Add(cancel);
+
+			var panel = new StackPanel { Margin = new Thickness(16) };
+			panel.Children.Add(Label("Window"));
+			panel.Children.Add(windowBox);
+			panel.Children.Add(Label("Group (pick one or type a new name — Win + . for emoji)"));
+			panel.Children.Add(groupBox);
+			panel.Children.Add(remember);
+			panel.Children.Add(containsBox);
+			panel.Children.Add(buttons);
+
+			var win = new Window
+			{
+				Title = "Move window to group", Content = panel, SizeToContent = SizeToContent.WidthAndHeight,
+				WindowStartupLocation = WindowStartupLocation.CenterScreen, ResizeMode = ResizeMode.NoResize,
+				Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)), Topmost = true, ShowInTaskbar = false,
+			};
+			ok.Click += (_, _) => win.DialogResult = true;
+			win.Loaded += (_, _) => { groupBox.Focus(); win.Activate(); };
+			if (win.ShowDialog() != true) return;
+
+			var group = Services.AppGroups.Create(groupBox.Text ?? "");
+			var target = windows[Math.Max(0, windowBox.SelectedIndex)]!;
+			if (group is null || target.ProcessFileName is null) return;
+
+			Log.Action($"Move window '{target.Title}' → '{group}' (remember='{(remember.IsChecked == true ? containsBox.Text : "")}')");
+			if (remember.IsChecked == true && containsBox.Text.Trim().Length > 0)
+				Services.AppGroups.AddRule(target.ProcessFileName, containsBox.Text, group);
+			Services.AppGroups.AssignWindow(target.Handle, group);
 		}
 
 		private void GroupHeader_RightClick(object sender, MouseButtonEventArgs e)
@@ -1890,6 +1960,8 @@ namespace StageManager
 			}));
 			menu.Items.Add(Item("Move up", () => Services.AppGroups.Move(group, -1)));
 			menu.Items.Add(Item("Move down", () => Services.AppGroups.Move(group, +1)));
+			if (Services.AppGroups.Rules.Any(r => r.Group == group))
+				menu.Items.Add(Item("Forget remembered windows for this group", () => Services.AppGroups.RemoveRulesFor(group)));
 			menu.Items.Add(Item("Delete group (apps stay open)", () => Services.AppGroups.Delete(group)));
 			menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
 			menu.IsOpen = true;
@@ -1956,19 +2028,24 @@ namespace StageManager
 			var exe = model.ProcessKey;
 			if (exe is not null)
 			{
+				menu.Items.Add(Item(model.Windows.Count > 1 ? "Move one window to group…" : "Move this window to group…", () => ShowMoveWindowDialog(model)));
 				foreach (var g in Services.AppGroups.Groups.Where(g => g != model.GroupName))
 				{
 					var group = g;
-					menu.Items.Add(Item($"Move to {group}", () => Services.AppGroups.Assign(exe, group)));
+					menu.Items.Add(Item($"Move whole app to {group}", () => Services.AppGroups.Assign(exe, group)));
 				}
-				menu.Items.Add(Item("Move to new group…", () =>
+				menu.Items.Add(Item("Move whole app to new group…", () =>
 				{
 					var name = PromptText("New group", "Name (tip: Win + . for emoji)", "");
 					var created = name is null ? null : Services.AppGroups.Create(name);
 					if (created is not null) Services.AppGroups.Assign(exe, created);
 				}));
 				if (model.GroupName.Length > 0)
-					menu.Items.Add(Item($"Remove from {model.GroupName}", () => Services.AppGroups.Unassign(exe)));
+					menu.Items.Add(Item($"Remove from {model.GroupName}", () =>
+					{
+						foreach (var w in model.Windows.ToArray()) Services.AppGroups.AssignWindow(w.Handle, "");
+						Services.AppGroups.Unassign(exe);
+					}));
 				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
 			}
 

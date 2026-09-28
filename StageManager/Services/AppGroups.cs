@@ -18,6 +18,7 @@ namespace StageManager.Services
 		{
 			public List<string> Groups { get; set; } = new();
 			public Dictionary<string, string> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+			public List<TitleRule> Rules { get; set; } = new();
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -37,6 +38,75 @@ namespace StageManager.Services
 
 		/// <summary>Sort key for a group: ungrouped first (0), then groups in order (1..n).</summary>
 		public static int GetOrder(string group) => group.Length == 0 ? 0 : _data.Groups.IndexOf(group) + 1;
+
+		/// <summary>
+		/// "Windows of <see cref="Exe"/> whose title contains <see cref="Contains"/> go to
+		/// <see cref="Group"/>" — survives restarts, unlike a per-window move.
+		/// </summary>
+		public sealed class TitleRule
+		{
+			public string Exe { get; set; } = "";
+			public string Contains { get; set; } = "";
+			public string Group { get; set; } = "";
+		}
+
+		// Per-window moves ("this window only"). Keyed by window handle, so they last until the
+		// window closes or Stage Manager restarts. "" = explicitly ungrouped.
+		private static readonly Dictionary<IntPtr, string> _windowOverrides = new();
+
+		public static IReadOnlyList<TitleRule> Rules => _data.Rules;
+
+		/// <summary>
+		/// The group one window belongs to: its own move first, then the first matching title
+		/// rule, then its app's group. "" = ungrouped.
+		/// </summary>
+		public static string GetWindowGroup(IntPtr hwnd, string? exe, string? title)
+		{
+			lock (_windowOverrides)
+				if (_windowOverrides.TryGetValue(hwnd, out var own))
+					return own.Length == 0 || _data.Groups.Contains(own) ? own : "";
+
+			if (exe is not null && title is not null)
+			{
+				var rule = _data.Rules.FirstOrDefault(r =>
+					string.Equals(r.Exe, exe, StringComparison.OrdinalIgnoreCase) &&
+					r.Contains.Length > 0 &&
+					title.Contains(r.Contains, StringComparison.OrdinalIgnoreCase) &&
+					_data.Groups.Contains(r.Group));
+				if (rule is not null)
+					return rule.Group;
+			}
+			return GetGroup(exe);
+		}
+
+		/// <summary>Moves just this window (not the whole app). group "" = no group.</summary>
+		public static void AssignWindow(IntPtr hwnd, string group)
+		{
+			if (group.Length > 0 && !_data.Groups.Contains(group)) _data.Groups.Add(group);
+			lock (_windowOverrides) _windowOverrides[hwnd] = group;
+			Save();
+		}
+
+		public static void ForgetWindow(IntPtr hwnd)
+		{
+			lock (_windowOverrides) _windowOverrides.Remove(hwnd);
+		}
+
+		public static void AddRule(string exe, string contains, string group)
+		{
+			contains = contains.Trim();
+			if (contains.Length == 0) return;
+			if (!_data.Groups.Contains(group)) _data.Groups.Add(group);
+			_data.Rules.RemoveAll(r => string.Equals(r.Exe, exe, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(r.Contains, contains, StringComparison.OrdinalIgnoreCase));
+			_data.Rules.Insert(0, new TitleRule { Exe = exe, Contains = contains, Group = group });
+			Save();
+		}
+
+		public static void RemoveRulesFor(string group)
+		{
+			if (_data.Rules.RemoveAll(r => r.Group == group) > 0) Save();
+		}
 
 		public static void Assign(string exe, string group)
 		{
@@ -67,6 +137,10 @@ namespace StageManager.Services
 			_data.Groups[i] = newName;
 			foreach (var app in _data.Apps.Where(kv => kv.Value == oldName).Select(kv => kv.Key).ToList())
 				_data.Apps[app] = newName;
+			foreach (var r in _data.Rules.Where(r => r.Group == oldName)) r.Group = newName;
+			lock (_windowOverrides)
+				foreach (var h in _windowOverrides.Where(kv => kv.Value == oldName).Select(kv => kv.Key).ToList())
+					_windowOverrides[h] = newName;
 			Save();
 		}
 
@@ -76,6 +150,10 @@ namespace StageManager.Services
 			if (!_data.Groups.Remove(name)) return;
 			foreach (var app in _data.Apps.Where(kv => kv.Value == name).Select(kv => kv.Key).ToList())
 				_data.Apps.Remove(app);
+			_data.Rules.RemoveAll(r => r.Group == name);
+			lock (_windowOverrides)
+				foreach (var h in _windowOverrides.Where(kv => kv.Value == name).Select(kv => kv.Key).ToList())
+					_windowOverrides.Remove(h);
 			Save();
 		}
 
@@ -99,6 +177,7 @@ namespace StageManager.Services
 					{
 						d.Apps = new Dictionary<string, string>(d.Apps ?? new(), StringComparer.OrdinalIgnoreCase);
 						d.Groups ??= new();
+						d.Rules ??= new();
 						return d;
 					}
 				}
