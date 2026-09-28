@@ -393,10 +393,15 @@ namespace StageManager
 
 			// Explorer updates the current desktop in the registry the instant a switch starts.
 			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(75) };
+			var desktopTick = 0;
 			_desktopPollTimer.Tick += (_, _) =>
 			{
-				if (!_sceneTransitionAnimator.IsAnimating)
-					SceneManager.PollVirtualDesktop();
+				if (_sceneTransitionAnimator.IsAnimating)
+					return;
+				SceneManager.PollVirtualDesktop();
+				// ~1 s: pick up apps opened/closed on other desktops (no-op when unchanged).
+				if (++desktopTick % 13 == 0)
+					RefreshOtherDesktops();
 			};
 			_desktopPollTimer.Start();
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
@@ -1012,6 +1017,7 @@ namespace StageManager
 					scenes[i].IsVisible = i < MAX_SCENES;
 				Log.Info("FILTER", $"SyncVisibility: filter=<none> total={scenes.Length} shown={Math.Min(scenes.Length, MAX_SCENES)} (cap={MAX_SCENES})");
 				AssignRowTilts();
+				RefreshOtherDesktops();
 				return;
 			}
 
@@ -1026,6 +1032,7 @@ namespace StageManager
 			}
 			Log.Info("FILTER", $"SyncVisibility: filter='{_filterProcessKey}' shown={shown} hidden={hidden} total={scenes.Length}");
 			AssignRowTilts();
+			RefreshOtherDesktops();
 		}
 
 		// Assigns each visible scene the top/bottom edge angles the macOS position
@@ -1818,6 +1825,78 @@ namespace StageManager
 		{
 			_trayMenuOpen = true;
 			RefreshSettingsMenuChecks();
+		}
+
+		public ObservableCollection<DesktopGroupModel> OtherDesktops { get; } = new ObservableCollection<DesktopGroupModel>();
+
+		private string _otherDesktopsSignature = "";
+		private readonly Dictionary<IntPtr, ImageSource?> _desktopIconCache = new Dictionary<IntPtr, ImageSource?>();
+
+		/// <summary>
+		/// Rebuilds the "other desktops" section under the scene tiles. Skips the rebuild when
+		/// nothing visible changed, so the frequent sidebar syncs don't make it blink.
+		/// </summary>
+		private void RefreshOtherDesktops()
+		{
+			if (SceneManager is null)
+				return;
+
+			var desktops = VirtualDesktop.GetDesktops();
+			var groups = SceneManager.GetOtherDesktopApps();
+			var ordered = desktops
+				.Select(d => (Info: d, Apps: groups.FirstOrDefault(g => g.Desktop == d.Id).Apps))
+				.Where(x => x.Apps is { Count: > 0 })
+				.ToList();
+
+			var signature = string.Join("|", ordered.Select(x => $"{x.Info.Id}:{x.Info.Name}:{string.Join(",", x.Apps!.Select(a => a.Handle))}"));
+			if (signature == _otherDesktopsSignature)
+				return;
+			_otherDesktopsSignature = signature;
+
+			OtherDesktops.Clear();
+			foreach (var (info, apps) in ordered)
+			{
+				OtherDesktops.Add(new DesktopGroupModel
+				{
+					Id = info.Id,
+					Name = info.Name,
+					Apps = apps!.Select(w => new DesktopAppModel
+					{
+						Title = w.Title,
+						Handle = w.Handle,
+						Icon = GetDesktopAppIcon(w),
+					}).ToList(),
+				});
+			}
+		}
+
+		private ImageSource? GetDesktopAppIcon(IWindow window)
+		{
+			if (_desktopIconCache.TryGetValue(window.Handle, out var cached))
+				return cached;
+			ImageSource? icon = null;
+			try
+			{
+				using var raw = ((WindowsWindow)window).ExtractIcon();
+				icon = WindowModel.IconToImageSource(raw);
+			}
+			catch (Exception ex) { Log.Info("VDESK", $"Icon extract failed for 0x{window.Handle.ToInt64():X}: {ex.Message}"); }
+			return _desktopIconCache[window.Handle] = icon;
+		}
+
+		/// <summary>
+		/// Jumps to an app on another desktop: activating its window makes Windows switch to
+		/// that desktop, and SceneManager stages it once the switch settles.
+		/// </summary>
+		private void OtherDesktopApp_Click(object sender, MouseButtonEventArgs e)
+		{
+			if (sender is not FrameworkElement { Tag: IntPtr handle } || handle == IntPtr.Zero)
+				return;
+			Log.Action($"Other-desktop app clicked: 0x{handle.ToInt64():X}");
+			if (Win32.IsIconic(handle))
+				Win32.ShowWindow(handle, Win32.SW.SW_RESTORE);
+			Win32Helper.ForceForegroundWindow(handle);
+			e.Handled = true;
 		}
 
 		private void RefreshSettingsMenuChecks()

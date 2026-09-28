@@ -509,6 +509,41 @@ namespace StageManager
 			}
 		}
 
+		/// <summary>
+		/// Gives every window on the current desktop that has no scene yet a home — joining
+		/// its app's scene on this desktop, or starting one. Windows on other desktops were
+		/// tracked since startup but never staged, so without this they had no tile and
+		/// clicking them did nothing. Dispatcher only (resolves desktops via COM).
+		/// </summary>
+		private void AdoptWindowsOnCurrentDesktop()
+		{
+			var orphans = GetSceneableWindows().ToArray()
+				.Where(w => FindSceneForWindow(w) is null
+					&& (Win32.IsWindowVisible(w.Handle) || w.IsMinimized)
+					&& VirtualDesktop.IsOnCurrentDesktop(w.Handle))
+				.ToArray();
+
+			foreach (var window in orphans)
+			{
+				var key = GetWindowGroupKey(window);
+				var scene = FindSceneForProcess(key);
+				if (scene is not null)
+				{
+					scene.Add(window);
+					Log.Scene("Desktop arrival: adopted window into its app's scene", scene, window);
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Updated));
+				}
+				else
+				{
+					scene = new Scene(key, window);
+					lock (_scenesLock)
+						_scenes.Add(scene);
+					Log.Scene("Desktop arrival: new scene", scene, window);
+					SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Created));
+				}
+			}
+		}
+
 		private async void WindowsManager_WindowCreated(IWindow window, bool firstCreate)
 		{
 			SwitchToSceneByNewWindow(window, allowSwitch: !IsDesktopSwitchSettling).SafeFireAndForget();
@@ -720,6 +755,8 @@ namespace StageManager
 
 		private void HandleVirtualDesktopChanged(Guid oldDesktop, Guid newDesktop)
 		{
+			AdoptWindowsOnCurrentDesktop();
+
 			// Remember what was on stage where the user is leaving, to restore on return.
 			_stageByDesktop[oldDesktop] = _current;
 
@@ -755,6 +792,7 @@ namespace StageManager
 					while (IsDesktopSwitchSettling)
 						await Task.Delay(50);
 
+					AdoptWindowsOnCurrentDesktop();
 					var fg = Win32.GetForegroundWindow();
 					Scene[] scenes;
 					lock (_scenesLock)
@@ -793,6 +831,8 @@ namespace StageManager
 				var here = GetSceneableWindows().ToArray()
 					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
 					.ToArray();
+				// Parking hands the foreground around; those activations are not the user.
+				_lastFocusHandoffAt = DateTime.UtcNow;
 				foreach (var w in here.Except(targetWindows))
 					WindowStrategy.Hide(w);
 				foreach (var w in targetWindows.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
@@ -801,6 +841,26 @@ namespace StageManager
 
 			CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
 			VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// App windows on other virtual desktops, grouped by desktop — one per app (process),
+		/// preferring the app's scene's first window. Feeds the sidebar's desktop sections.
+		/// Includes desktops not visited this session, whose windows have no scene yet.
+		/// </summary>
+		public IReadOnlyList<(Guid Desktop, IReadOnlyList<IWindow> Apps)> GetOtherDesktopApps()
+		{
+			var current = VirtualDesktop.CurrentDesktopId;
+			return GetSceneableWindows().ToArray()
+				.Where(w => Win32.IsWindowVisible(w.Handle) || w.IsMinimized)
+				.Select(w => (Window: w, Desktop: VirtualDesktop.DesktopOf(w.Handle)))
+				.Where(x => x.Desktop != Guid.Empty && x.Desktop != current)
+				.GroupBy(x => x.Desktop)
+				.Select(g => (g.Key, (IReadOnlyList<IWindow>)g
+					.GroupBy(x => x.Window.ProcessId)
+					.Select(p => p.Select(x => x.Window).First())
+					.ToList()))
+				.ToList();
 		}
 
 		/// <summary>True when the scene has at least one window on the current virtual desktop.</summary>
