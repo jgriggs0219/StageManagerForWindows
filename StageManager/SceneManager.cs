@@ -969,7 +969,13 @@ namespace StageManager
 				targetScene.Add(window);
 
 				// Remember the combination so it survives restarts (and so RegroupWindows keeps it).
-				AppGroups.RecordSplit(targetScene.Windows.Select(w => w.ProcessFileName ?? ""));
+				// Only apps whose windows are ALL in this tile join the combo: Chrome with windows
+				// everywhere must not drag every Chrome window into it. The combo keeps this tile's group.
+				var allHere = targetScene.Windows.Select(w => w.ProcessFileName ?? "").Distinct(StringComparer.OrdinalIgnoreCase)
+					.Where(exe => GetSceneableWindows().Where(w => string.Equals(w.ProcessFileName, exe, StringComparison.OrdinalIgnoreCase)).All(w => targetScene.Windows.Contains(w)))
+					.ToList();
+				var tileGroup = targetScene.Key.Contains('#') ? targetScene.Key.Substring(targetScene.Key.IndexOf('#') + 1) : "";
+				AppGroups.RecordSplit(allHere, tileGroup);
 
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Updated));
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(targetScene, window, ChangeType.Updated));
@@ -1333,7 +1339,7 @@ namespace StageManager
 		// One scene per app (or remembered split of apps) per user group: a Chrome window given
 		// its own group gets its own tile; apps the user combined share one again after restart.
 		private string GetWindowGroupKey(IWindow window) =>
-			$"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetWindowGroup(window.Handle, window.ProcessFileName, window.Title)}";
+			$"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetEffectiveGroup(window.Handle, window.ProcessFileName, window.Title)}";
 
 		public void Dispose()
 		{

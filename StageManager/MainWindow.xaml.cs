@@ -2090,25 +2090,30 @@ namespace StageManager
 
 			// Groups: move this app into any other group, start a new one, or leave its group.
 			var exe = model.ProcessKey;
+			// A combined tile moves between groups as one unit.
+			var split = Services.AppGroups.GetSplitKey(exe);
 			if (exe is not null)
 			{
 				menu.Items.Add(Item(model.Windows.Count > 1 ? "Move one window to group…" : "Move this window to group…", () => ShowMoveWindowDialog(model)));
 				foreach (var g in Services.AppGroups.Groups.Where(g => g != model.GroupName))
 				{
 					var group = g;
-					menu.Items.Add(Item($"Move whole app to {group}", () => Services.AppGroups.Assign(exe, group)));
+					menu.Items.Add(Item(split is not null ? $"Move this combo to {group}" : $"Move whole app to {group}", () =>
+					{
+						if (split is not null) Services.AppGroups.SetSplitGroup(split, group); else Services.AppGroups.Assign(exe, group);
+					}));
 				}
 				menu.Items.Add(Item("Move whole app to new group…", () =>
 				{
 					var name = PromptText("New group", "Name (tip: Win + . for emoji)", "");
 					var created = name is null ? null : Services.AppGroups.Create(name);
-					if (created is not null) Services.AppGroups.Assign(exe, created);
+					if (created is not null) { if (split is not null) Services.AppGroups.SetSplitGroup(split, created); else Services.AppGroups.Assign(exe, created); }
 				}));
 				if (model.GroupName.Length > 0)
 					menu.Items.Add(Item($"Remove from {model.GroupName}", () =>
 					{
 						foreach (var w in model.Windows.ToArray()) Services.AppGroups.AssignWindow(w.Handle, "");
-						Services.AppGroups.Unassign(exe);
+						if (split is not null) Services.AppGroups.SetSplitGroup(split, ""); else Services.AppGroups.Unassign(exe);
 					}));
 				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
 			}

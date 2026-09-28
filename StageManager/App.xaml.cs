@@ -32,16 +32,29 @@ namespace StageManager
 			// parked off-screen, where the indicator it suppresses cannot be seen anyway.
 			Composition.CaptureBorder.RequestAsync().SafeFireAndForget();
 
-			// Log-only — intentionally NOT setting args.Handled so the app terminates
+			// UI-thread exceptions are logged and SURVIVED. Terminating here used to strand every
+			// parked window off-screen (apps unreachable until a reboot or the rescue script);
+			// a sidebar glitch is always better than that. Throttled so a tight failure loop
+			// still ends the process (the watchdog then restores windows and restarts us).
 			DispatcherUnhandledException += (s, args) =>
 			{
-				Log.Fatal("CRASH", $"UI thread: {args.Exception}");
+				Log.Fatal("CRASH", $"UI thread (survived): {args.Exception}");
+				var now = DateTime.UtcNow;
+				if ((now - _uiErrorWindowStart).TotalSeconds > 10) { _uiErrorWindowStart = now; _uiErrorCount = 0; }
+				if (++_uiErrorCount <= 20)
+					args.Handled = true;
+				else
+					Strategies.OpacityWindowStrategy.EmergencyRestoreAll();
 			};
 
 			AppDomain.CurrentDomain.UnhandledException += (s, args) =>
 			{
 				Log.Fatal("CRASH", $"Unhandled: {args.ExceptionObject}");
+				// Going down for sure: give every parked window back before we do.
+				Strategies.OpacityWindowStrategy.EmergencyRestoreAll();
 			};
+
+			Services.Watchdog.Start();
 
 			TaskScheduler.UnobservedTaskException += (s, args) =>
 			{
@@ -49,8 +62,13 @@ namespace StageManager
 			};
 		}
 
+		private static DateTime _uiErrorWindowStart = DateTime.MinValue;
+		private static int _uiErrorCount;
+
 		protected override void OnExit(ExitEventArgs e)
 		{
+			// Tell the watchdog this was the user quitting, not a crash: no restart.
+			Services.Watchdog.MarkCleanExit();
 			Services.ThemeManager.StopListening();
 			base.OnExit(e);
 		}

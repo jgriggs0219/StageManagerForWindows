@@ -354,7 +354,16 @@ namespace StageManager.Native
 			return Win32.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
 		}
 
+		// An exception escaping a WinEvent callback is fatal to the whole process
+		// (STATUS_FATAL_USER_CALLBACK_EXCEPTION, 0xC000041D) — seen in the crash reports.
+		// Contain it here; one lost event is harmless, a dead process strands windows.
 		private void WindowHook(IntPtr hWinEventHook, Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+		{
+			try { WindowHookCore(eventType, hwnd, idObject, idChild); }
+			catch (Exception ex) { Log.Info("HOOK", $"WinEvent {eventType} for 0x{hwnd.ToInt64():X} failed: {ex.GetType().Name}: {ex.Message}"); }
+		}
+
+		private void WindowHookCore(Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild)
 		{
 			if (!_active)
 				return;

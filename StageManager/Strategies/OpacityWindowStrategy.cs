@@ -1,6 +1,7 @@
 using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows;
@@ -60,6 +61,35 @@ namespace StageManager.Strategies
 					return false;
 				_originalPositions[hWnd] = (x, y);
 				return true;
+			}
+		}
+
+		/// <summary>
+		/// Last-resort restore for a dying process: puts every parked window back where it was,
+		/// fully opaque and clickable. No locks beyond the position map, no WinRT, no UI — it
+		/// must work from a crash handler. Never throws.
+		/// </summary>
+		public static void EmergencyRestoreAll()
+		{
+			(IntPtr Handle, int X, int Y)[] parked;
+			try
+			{
+				lock (_globalLock)
+					parked = _originalPositions.Select(kv => (kv.Key, kv.Value.X, kv.Value.Y)).ToArray();
+			}
+			catch { return; }
+
+			foreach (var (h, x, y) in parked)
+			{
+				try
+				{
+					Win32.SetWindowPos(h, IntPtr.Zero, x, y, 0, 0,
+						Win32.SetWindowPosFlags.IgnoreResize | Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate);
+					Win32Helper.SetAlpha(h, 255);
+					var ex = Win32.GetWindowExStyleLongPtr(h);
+					Win32.SetWindowStyleExLongPtr(h, ex & ~Win32.WS_EX.WS_EX_TRANSPARENT);
+				}
+				catch { }
 			}
 		}
 

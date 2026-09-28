@@ -21,6 +21,7 @@ namespace StageManager.Services
 			public List<TitleRule> Rules { get; set; } = new();
 			public List<List<string>> Splits { get; set; } = new();
 			public Dictionary<string, int[]> Layouts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+			public Dictionary<string, string> SplitGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -128,7 +129,7 @@ namespace StageManager.Services
 		/// Records that these apps share a tile. Each app is in at most one split, so they are
 		/// first taken out of any other; splits left with fewer than two apps disappear.
 		/// </summary>
-		public static void RecordSplit(IEnumerable<string> exes)
+		public static void RecordSplit(IEnumerable<string> exes, string group)
 		{
 			var set = exes.Where(e => !string.IsNullOrEmpty(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 			if (set.Count < 2) return;
@@ -137,6 +138,8 @@ namespace StageManager.Services
 			foreach (var s in _data.Splits) s.RemoveAll(e => set.Contains(e, StringComparer.OrdinalIgnoreCase));
 			_data.Splits.RemoveAll(s => s.Count < 2);
 			_data.Splits.Add(set);
+			// The combined tile stays in the group it was made in.
+			_data.SplitGroups[GetSplitKey(set[0])!] = group.Length == 0 || _data.Groups.Contains(group) ? group : "";
 			Save();
 		}
 
@@ -168,6 +171,37 @@ namespace StageManager.Services
 			var keys = _data.Layouts.Keys.Where(k => k.StartsWith(tileKey + "|", StringComparison.OrdinalIgnoreCase)).ToList();
 			foreach (var k in keys) _data.Layouts.Remove(k);
 			if (keys.Count > 0) Persist();
+		}
+
+		/// <summary>
+		/// The group a combined tile (split) lives in. Stored for the split itself so its member
+		/// windows can never disagree: before this, a Chrome window matching a title rule and a
+		/// Discord window in another group bounced the tile between groups every few seconds.
+		/// </summary>
+		public static string GetSplitGroup(string splitKey)
+		{
+			if (_data.SplitGroups.TryGetValue(splitKey, out var g) && (g.Length == 0 || _data.Groups.Contains(g)))
+				return g;
+			// Default: the group of the split's first app (alphabetical, so it is stable).
+			var first = splitKey.StartsWith("split:") ? splitKey.Substring(6).Split('+').FirstOrDefault() : null;
+			return GetGroup(first);
+		}
+
+		public static void SetSplitGroup(string splitKey, string group)
+		{
+			if (group.Length > 0 && !_data.Groups.Contains(group)) _data.Groups.Add(group);
+			_data.SplitGroups[splitKey] = group;
+			Save();
+		}
+
+		/// <summary>
+		/// The group a window's tile belongs to, accounting for splits: a window in a split
+		/// takes the split's group; otherwise its own move, title rule, or app group.
+		/// </summary>
+		public static string GetEffectiveGroup(IntPtr hwnd, string? exe, string? title)
+		{
+			var split = GetSplitKey(exe);
+			return split is not null ? GetSplitGroup(split) : GetWindowGroup(hwnd, exe, title);
 		}
 
 		public static void Assign(string exe, string group)
@@ -242,6 +276,7 @@ namespace StageManager.Services
 						d.Rules ??= new();
 						d.Splits ??= new();
 						d.Layouts = new Dictionary<string, int[]>(d.Layouts ?? new(), StringComparer.OrdinalIgnoreCase);
+						d.SplitGroups = new Dictionary<string, string>(d.SplitGroups ?? new(), StringComparer.OrdinalIgnoreCase);
 						return d;
 					}
 				}

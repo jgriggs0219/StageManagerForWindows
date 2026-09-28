@@ -373,7 +373,7 @@ namespace StageManager.Model
 				return;
 			}
 			var w = Windows.FirstOrDefault()?.Window;
-			GroupName = w is null ? "" : Services.AppGroups.GetWindowGroup(w.Handle, w.ProcessFileName, w.Title);
+			GroupName = w is null ? "" : Services.AppGroups.GetEffectiveGroup(w.Handle, w.ProcessFileName, w.Title);
 			GroupOrder = Services.AppGroups.GetOrder(GroupName);
 			RaisePropertyChanged(nameof(GroupColor));
 		}

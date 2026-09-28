@@ -499,16 +499,30 @@ namespace StageManager.Composition
 					}
 				}
 
+				// The WHOLE BeginDraw..EndDraw runs under the process-wide context lock. Every
+				// session's frames arrive on their own threads, and drawing surfaces of one
+				// CompositionGraphicsDevice must not be mid-draw concurrently: overlapping
+				// draws failed with "Operation is not valid due to the current state of the
+				// object" thousands of times under heavy use, starving and glitching tiles.
+				lock (D3DDeviceHolder.ContextLock)
+				{
 				var iidDxgi = s_iidDxgiSurface;
 				IntPtr pDxgiSurface;
 				System.Drawing.Point offset;
 				try
 				{
 					_surfaceInterop.BeginDraw(IntPtr.Zero, ref iidDxgi, out pDxgiSurface, out offset);
+					_beginDrawFailures = 0;
 				}
 				catch (Exception ex)
 				{
-					Log.Info("CAPSESS", $"BeginDraw failed: {ex.Message}");
+					var n = ++_beginDrawFailures;
+					if (n == 1 || n % 100 == 0)
+						Log.Info("CAPSESS", $"BeginDraw failed for 0x{_hwnd:X} (x{n}): {ex.Message}");
+					// A surface that keeps refusing is broken, not busy: rebuild it rather than
+					// retrying it on every frame forever.
+					if (n == 5)
+						ScheduleSurfaceRebuild();
 					return;
 				}
 
@@ -544,7 +558,48 @@ namespace StageManager.Composition
 					try { _surfaceInterop.EndDraw(); }
 					catch (Exception ex) { Log.Info("CAPSESS", $"EndDraw threw: {ex.Message}"); }
 				}
+				}
 			}
+		}
+
+		private int _beginDrawFailures;
+
+		/// <summary>
+		/// Replaces this tile's drawing surface with a fresh one (same brush, so the tile keeps
+		/// its place). Runs on the compositor's thread, which owns composition objects.
+		/// </summary>
+		private void ScheduleSurfaceRebuild()
+		{
+			var dq = _compositor.DispatcherQueue;
+			if (dq is null) return;
+			dq.TryEnqueue(() =>
+			{
+				lock (_frameLock)
+				{
+					if (_disposed || _surfaceBrush is null) return;
+					lock (D3DDeviceHolder.ContextLock)
+					try
+					{
+						var size = (_lastFrameSize.Width > 0 && _lastFrameSize.Height > 0)
+							? new Windows.Foundation.Size(_lastFrameSize.Width, _lastFrameSize.Height)
+							: new Windows.Foundation.Size(1, 1);
+						var fresh = _devices.GraphicsDevice.CreateDrawingSurface(
+							size, DirectXPixelFormat.B8G8R8A8UIntNormalized, DirectXAlphaMode.Premultiplied);
+						var old = _surface;
+						_surface = fresh;
+						_surfaceInterop = ((object)fresh).As<ICompositionDrawingSurfaceInterop>();
+						_lastSurfaceSize = new SizeInt32((int)size.Width, (int)size.Height);
+						_surfaceBrush.Surface = fresh;
+						DisposeQuietly(old);
+						_beginDrawFailures = 0;
+						Log.Info("CAPSESS", $"Rebuilt drawing surface for 0x{_hwnd:X}");
+					}
+					catch (Exception ex)
+					{
+						Log.Info("CAPSESS", $"Surface rebuild failed for 0x{_hwnd:X}: {ex.Message}");
+					}
+				}
+			});
 		}
 
 		private void OnItemClosed(GraphicsCaptureItem sender, object args)
