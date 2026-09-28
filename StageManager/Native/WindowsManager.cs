@@ -274,6 +274,15 @@ namespace StageManager.Native
 			if (!Win32.IsIconic(hwnd))
 				return;
 
+			// Never touch windows on other virtual desktops: restoring one here left it
+			// transparent and click-through on its desktop (nothing un-does that until it is
+			// staged), and could drag it onto the current desktop.
+			if (VirtualDesktop.IsShellCloaked(hwnd) && !VirtualDesktop.IsOnCurrentDesktop(hwnd))
+			{
+				Log.Info("STARTUP", $"Minimized window 0x{hwnd.ToInt64():X} is on another desktop, leaving it alone");
+				return;
+			}
+
 			try
 			{
 				// Cloak BEFORE the show call so the window emerges already invisible — no flash,
