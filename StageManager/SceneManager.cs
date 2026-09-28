@@ -70,6 +70,12 @@ namespace StageManager
 			if (window == null)
 				return false;
 
+			// Always-on-top popups that belong to no virtual desktop (Dialpad's notification,
+			// status pills) float over every desktop — they are not app windows to stage.
+			if ((Win32.GetWindowExStyleLongPtr(window.Handle) & Win32.WS_EX.WS_EX_TOPMOST) != 0 &&
+				VirtualDesktop.IsUnassigned(window.Handle))
+				return true;
+
 			// Quick process check – bail out early if it is definitely not Teams
 			var exe = window.ProcessFileName ?? string.Empty;
 			if (!string.Equals(exe, TeamsProcessName1, StringComparison.OrdinalIgnoreCase) &&

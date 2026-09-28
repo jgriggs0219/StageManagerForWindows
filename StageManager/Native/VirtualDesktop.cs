@@ -43,6 +43,31 @@ namespace StageManager.Native
 			}
 		}
 
+		[DllImport("dwmapi.dll")]
+		private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+		private const int DWMWA_CLOAKED = 14;
+		private const int DWM_CLOAKED_SHELL = 0x2;
+
+		/// <summary>
+		/// True when the shell has cloaked the window — which is what a virtual desktop switch
+		/// does to every window on the desktop being left. Pure DWM query, no COM, so it is
+		/// safe inside a WinEvent callback.
+		/// </summary>
+		public static bool IsShellCloaked(IntPtr hwnd) =>
+			DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out var v, sizeof(int)) == 0 && (v & DWM_CLOAKED_SHELL) != 0;
+
+		/// <summary>
+		/// True when the shell reports the window as belonging to no virtual desktop — shown
+		/// on all of them (notification toasts, floating status pills).
+		/// </summary>
+		public static bool IsUnassigned(IntPtr hwnd)
+		{
+			var m = Manager;
+			if (m is null || hwnd == IntPtr.Zero) return false;
+			try { return m.GetWindowDesktopId(hwnd, out var id) == 0 && id == Guid.Empty; }
+			catch (Exception) { _manager = null; return false; }
+		}
+
 		/// <summary>
 		/// True when the window lives on the current virtual desktop. Fails open (true) when
 		/// the shell can't answer — windows with no desktop assignment, a restarting Explorer —

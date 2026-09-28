@@ -370,9 +370,18 @@ namespace StageManager.Native
 						UnregisterWindow(hwnd);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED:
+						// A virtual desktop switch shell-cloaks every window on the desktop being
+						// left. Treating that as the window going away unregistered it, deleted
+						// its scene, and re-created everything as "new windows" on the way back.
+						if (_windows.ContainsKey(hwnd) && VirtualDesktop.IsShellCloaked(hwnd))
+							break;
 						UpdateWindow(hwnd, WindowUpdateType.Hide);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
+						// The mirror image: a known window reappearing because its desktop came
+						// back is not the app asking to be shown.
+						if (_windows.ContainsKey(hwnd))
+							break;
 						UpdateWindow(hwnd, WindowUpdateType.Show);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:
