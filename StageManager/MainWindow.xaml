@@ -223,9 +223,9 @@
                         Style="{StaticResource TrayMenuLabelStyle}"
                         Header="Animation speed" />
                     <MenuItem x:Name="menuAnimOff" Style="{StaticResource TrayMenuItemStyle}" Header="Off (instant)" Tag="0" Click="MenuItem_AnimSpeed_Click" />
-                    <MenuItem x:Name="menuAnimFast" Style="{StaticResource TrayMenuItemStyle}" Header="Fast" Tag="180" Click="MenuItem_AnimSpeed_Click" />
-                    <MenuItem x:Name="menuAnimNormal" Style="{StaticResource TrayMenuItemStyle}" Header="Normal" Tag="300" Click="MenuItem_AnimSpeed_Click" />
-                    <MenuItem x:Name="menuAnimSlow" Style="{StaticResource TrayMenuItemStyle}" Header="Slow" Tag="500" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimFast" Style="{StaticResource TrayMenuItemStyle}" Header="Fast" Tag="220" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimNormal" Style="{StaticResource TrayMenuItemStyle}" Header="Normal" Tag="380" Click="MenuItem_AnimSpeed_Click" />
+                    <MenuItem x:Name="menuAnimSlow" Style="{StaticResource TrayMenuItemStyle}" Header="Slow" Tag="600" Click="MenuItem_AnimSpeed_Click" />
                     <Separator Style="{StaticResource TrayMenuSeparatorStyle}" />
                     <MenuItem
                         Style="{StaticResource TrayMenuLabelStyle}"

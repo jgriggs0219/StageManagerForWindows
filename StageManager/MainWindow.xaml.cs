@@ -59,6 +59,7 @@ namespace StageManager
 		private bool _suppressNextModeSlide;
 		private double _lastWidth;
 		private Timer? _overlapCheckTimer;
+		private System.Windows.Threading.DispatcherTimer? _desktopPollTimer;
 		private long _mouseX;
 		private CancellationTokenSource? _cancellationTokenSource;
 		private SceneModel? _removedCurrentScene;
@@ -349,6 +350,7 @@ namespace StageManager
 
 			// Dispose the overlap check timer to stop background operations
 			_overlapCheckTimer?.Dispose();
+			_desktopPollTimer?.Stop();
 
 			trayIcon.Dispose();
 
@@ -387,6 +389,16 @@ namespace StageManager
 
 			SceneManager.SceneChanged += SceneManager_SceneChanged;
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
+			SceneManager.VirtualDesktopChanged += (_, _) => SyncVisibilityByUpdatedTimeStamp();
+
+			// Switching to an empty virtual desktop raises no window events, so poll for it.
+			_desktopPollTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+			_desktopPollTimer.Tick += (_, _) =>
+			{
+				if (!_sceneTransitionAnimator.IsAnimating)
+					SceneManager.CheckVirtualDesktopChanged();
+			};
+			_desktopPollTimer.Start();
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
 
 			// Wire up drag-and-drop manager
@@ -989,7 +1001,10 @@ namespace StageManager
 
 		private void SyncVisibilityByUpdatedTimeStamp()
 		{
-			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
+			// Only scenes with a window on the current virtual desktop belong in the sidebar.
+			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+				off.IsVisible = false;
+			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 
 			if (_filterProcessKey == null)
 			{
@@ -1073,7 +1088,10 @@ namespace StageManager
 		{
 			var iconGen = ++_filterIconGen;
 
-			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
+			// Only scenes with a window on the current virtual desktop belong in the sidebar.
+			foreach (var off in Scenes.Where(s => !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+				off.IsVisible = false;
+			var scenes = Scenes.Where(s => SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 			bool[] target = new bool[scenes.Length];
 			if (_filterProcessKey == null)
 			{

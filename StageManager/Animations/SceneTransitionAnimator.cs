@@ -233,7 +233,8 @@ namespace StageManager.Animations
 			IFlyingCard? outgoing, Rect outFrom, Rect outTo)
 		{
 			var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-			var easing = new PowerEase { EasingMode = EasingMode.EaseOut };
+			// Ease-in-out: the old ease-out launched at full speed and snapped, which read as a jolt.
+			var easing = new CubicEase { EasingMode = EasingMode.EaseInOut };
 			double durationMs = Math.Max(1, StageManager.Services.Settings.GetAnimationDurationMs());
 			TimeSpan? start = null;
 			EventHandler? handler = null;

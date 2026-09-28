@@ -33,6 +33,14 @@ namespace StageManager
 		// RestoreMinimizedInvisibly would drag it back on the next scene switch.
 		private readonly HashSet<IntPtr> _userMinimized = new HashSet<IntPtr>();
 
+		// Last known "is on the current virtual desktop" answer per tracked window. A window
+		// that still exists but flips its answer means the user switched virtual desktops
+		// (or moved the window to another one) — see CheckVirtualDesktopChanged.
+		private readonly Dictionary<IntPtr, bool> _onCurrentDesktop = new Dictionary<IntPtr, bool>();
+
+		/// <summary>Raised on the UI thread after a virtual desktop switch was handled.</summary>
+		public event EventHandler? VirtualDesktopChanged;
+
 		/// <summary>
 		/// When set, focus-triggered scene switches use this delegate instead of calling SwitchTo directly.
 		/// MainWindow sets this to inject the transition animation.
@@ -143,6 +151,21 @@ namespace StageManager
 			{
 				Log.Window("EVENT", $"SUSPENDED, ignoring {type}", window);
 				return;
+			}
+
+			// A virtual desktop switch cloaks/uncloaks every window and moves the foreground.
+			// None of that is the user rearranging scenes: detect it first, handle it as one
+			// instant stage change, and drop the event storm it produces.
+			if (type == WindowUpdateType.Foreground || type == WindowUpdateType.Show)
+			{
+				if (CheckVirtualDesktopChanged())
+					return;
+
+				if (!VirtualDesktop.IsOnCurrentDesktop(window.Handle))
+				{
+					Log.Window("VDESK", $"{type} on window from another virtual desktop, ignoring", window);
+					return;
+				}
 			}
 
 			if (type == WindowUpdateType.Foreground)
@@ -616,6 +639,69 @@ namespace StageManager
 			return false;
 		}
 
+		/// <summary>
+		/// True when any tracked window flipped between "on the current virtual desktop" and
+		/// not since the last check — i.e. the user switched desktops. Handles the switch
+		/// (instant, no animation) before returning. Call on the UI thread; MainWindow also
+		/// polls it so switching to an empty desktop, which raises no window events, is caught.
+		/// </summary>
+		public bool CheckVirtualDesktopChanged()
+		{
+			var flipped = false;
+			var seen = new HashSet<IntPtr>();
+			foreach (var w in GetSceneableWindows())
+			{
+				seen.Add(w.Handle);
+				var on = VirtualDesktop.IsOnCurrentDesktop(w.Handle);
+				if (_onCurrentDesktop.TryGetValue(w.Handle, out var was) && was != on)
+					flipped = true;
+				_onCurrentDesktop[w.Handle] = on;
+			}
+			foreach (var gone in _onCurrentDesktop.Keys.Where(h => !seen.Contains(h)).ToArray())
+				_onCurrentDesktop.Remove(gone);
+
+			if (!flipped)
+				return false;
+
+			HandleVirtualDesktopChanged();
+			return true;
+		}
+
+		private void HandleVirtualDesktopChanged()
+		{
+			bool OnHere(Scene s) => s.Windows.Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
+
+			Scene[] scenes;
+			lock (_scenesLock)
+				scenes = _scenes.ToArray();
+
+			// Windows re-activates the last-used window of the desktop being entered, which is
+			// the one that was on stage when the user left it. Fall back to any scene here.
+			var fg = Win32.GetForegroundWindow();
+			var target = scenes.FirstOrDefault(s => s.Windows.Any(w => w.Handle == fg) && OnHere(s))
+				?? (_current is not null && OnHere(_current) ? _current : null)
+				?? scenes.FirstOrDefault(OnHere);
+
+			Log.Info("VDESK", $"Virtual desktop switched → stage '{target?.Title ?? "(empty desktop)"}'");
+
+			var prior = _current;
+			_current = target;
+			_lastScene = null;
+			foreach (var s in scenes)
+				s.IsSelected = ReferenceEquals(s, target);
+
+			if (target is not null)
+				foreach (var w in target.Windows.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle) && !IsUserMinimized(w)))
+					WindowStrategy.Show(w);
+
+			CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
+			VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
+		}
+
+		/// <summary>True when the scene has at least one window on the current virtual desktop.</summary>
+		public static bool IsSceneOnCurrentDesktop(Scene scene) =>
+			scene.Windows.Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
+
 		public async Task<bool> SwitchTo(Scene? scene)
 		{
 			if (object.Equals(scene, _current))
@@ -637,9 +723,12 @@ namespace StageManager
 
 				// When switching to a scene, skip the foreground window (it gets focus handling separately).
 				// When switching to desktop (scene=null), hide ALL windows including the foreground.
+				// Only this virtual desktop's windows: parking a window that lives on another
+				// desktop would drag it off-screen there, where the user never sees it return.
 				var otherWindows = GetSceneableWindows()
 					.Except(scene?.Windows ?? Array.Empty<IWindow>())
 					.Where(w => scene is null || w.Handle != foregroundHandle)
+					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
 					.ToArray();
 
 				var prior = _current;
