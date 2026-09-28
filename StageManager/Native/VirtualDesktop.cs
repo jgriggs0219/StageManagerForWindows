@@ -157,6 +157,53 @@ namespace StageManager.Native
 			return moved;
 		}
 
+		private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+		[DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+		[DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+		[DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+		private const uint GW_OWNER = 4;
+
+		/// <summary>
+		/// Moves every top-level window of this process (sidebar, icon overlay, transition
+		/// overlay, drag ghosts) to <paramref name="desktop"/>. Windows otherwise leaves them on
+		/// the desktop Stage Manager started on, so the sidebar was missing — and unclickable —
+		/// everywhere else. MoveWindowToDesktop is allowed for a process's own windows.
+		/// Dispatcher only.
+		/// </summary>
+		public static void MoveOwnWindowsTo(Guid desktop)
+		{
+			var m = Manager;
+			if (m is null || desktop == Guid.Empty) return;
+
+			var pid = (uint)Environment.ProcessId;
+			var own = new List<IntPtr>();
+			EnumWindows((h, _) =>
+			{
+				if (GetWindowThreadProcessId(h, out var p) != 0 && p == pid && GetWindow(h, GW_OWNER) == IntPtr.Zero)
+					own.Add(h);
+				return true;
+			}, IntPtr.Zero);
+
+			foreach (var h in own)
+			{
+				try
+				{
+					if (m.GetWindowDesktopId(h, out var cur) == 0 && cur == desktop)
+						continue;
+					var target = desktop;
+					var hr = m.MoveWindowToDesktop(h, ref target);
+					if (hr != 0)
+						Log.Info("VDESK", $"MoveWindowToDesktop(own 0x{h.ToInt64():X}) hr=0x{hr:X8}");
+				}
+				catch (Exception ex)
+				{
+					Log.Info("VDESK", $"MoveWindowToDesktop threw: {ex.Message}");
+					_manager = null;
+					return;
+				}
+			}
+		}
+
 		public static void Forget(IntPtr hwnd)
 		{
 			lock (_lock) _windowDesktop.Remove(hwnd);

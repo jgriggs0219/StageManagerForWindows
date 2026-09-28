@@ -731,6 +731,7 @@ namespace StageManager
 			if (_knownDesktop == Guid.Empty)
 			{
 				_knownDesktop = now;
+				VirtualDesktop.MoveOwnWindowsTo(now);
 				return;
 			}
 
@@ -738,6 +739,8 @@ namespace StageManager
 			{
 				var old = _knownDesktop;
 				_knownDesktop = now;
+				// Sidebar and overlays follow the user first, so they're there as the slide lands.
+				VirtualDesktop.MoveOwnWindowsTo(now);
 				_desktopSwitchSettleUntil = DateTime.UtcNow + DesktopSwitchSettle;
 				HandleVirtualDesktopChanged(old, now);
 				QueueSettleFollowUp();
