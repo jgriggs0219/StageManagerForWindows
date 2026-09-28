@@ -355,7 +355,9 @@ namespace StageManager.Animations
 						Win32.SetWindowPosFlags.IgnoreResize | Win32.SetWindowPosFlags.DoNotActivate);
 				}
 
-				if (mouseX < _bufferRightPhysical)
+				// Only with Shift held: taking the drag away from Windows also kills Snap (drag to
+				// the left edge), which users expect to keep working. Shift + drag = pull into sidebar.
+				if (mouseX < _bufferRightPhysical && System.Windows.Forms.Control.ModifierKeys.HasFlag(System.Windows.Forms.Keys.Shift))
 					EnterBufferZone(_trackedWindow);
 				return;
 			}

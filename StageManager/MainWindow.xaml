@@ -311,6 +311,11 @@
                         Style="{StaticResource TrayMenuItemStyle}"
                         Header="Click desktop to show desktop"
                         Click="MenuItem_ClickDesktop_Click" />
+                    <MenuItem
+                        x:Name="menuAutoArrange"
+                        Style="{StaticResource TrayMenuItemStyle}"
+                        Header="Auto-arrange apps on stage"
+                        Click="MenuItem_AutoArrange_Click" />
                     <Separator Style="{StaticResource TrayMenuSeparatorStyle}" />
                     <MenuItem
                         Style="{StaticResource TrayMenuLabelStyle}"

@@ -32,6 +32,10 @@ namespace StageManager.Services
 		public static void SetClickDesktopToShowDesktop(bool enabled) => SetInt("ClickDesktopToShowDesktop", enabled ? 1 : 0);
 
 
+		/// <summary>Size and centre apps on stage (side by side for combined apps); hand-placed spots win.</summary>
+		public static bool GetAutoArrange() => GetInt("AutoArrange", 1) != 0;
+		public static void SetAutoArrange(bool enabled) => SetInt("AutoArrange", enabled ? 1 : 0);
+
 		private static int GetInt(string name, int fallback)
 		{
 			using var key = Registry.CurrentUser.OpenSubKey(REG_KEY);

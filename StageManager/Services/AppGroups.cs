@@ -20,6 +20,7 @@ namespace StageManager.Services
 			public Dictionary<string, string> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 			public List<TitleRule> Rules { get; set; } = new();
 			public List<List<string>> Splits { get; set; } = new();
+			public Dictionary<string, int[]> Layouts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -148,6 +149,27 @@ namespace StageManager.Services
 			if (changed) Save();
 		}
 
+		/// <summary>
+		/// Where the user last put an app on stage (moved/resized by hand), per tile + app, in
+		/// physical pixels [x, y, width, height]. Used instead of the automatic layout.
+		/// </summary>
+		public static int[]? GetLayout(string key) => _data.Layouts.TryGetValue(key, out var r) && r.Length == 4 ? r : null;
+
+		/// <summary>Remembers a hand-placed rect. Saved without raising Changed (no regroup needed).</summary>
+		public static void SaveLayout(string key, int x, int y, int w, int h)
+		{
+			_data.Layouts[key] = new[] { x, y, w, h };
+			Persist();
+		}
+
+		/// <summary>Forgets hand-placed rects for a tile so it goes back to the automatic layout.</summary>
+		public static void ClearLayouts(string tileKey)
+		{
+			var keys = _data.Layouts.Keys.Where(k => k.StartsWith(tileKey + "|", StringComparison.OrdinalIgnoreCase)).ToList();
+			foreach (var k in keys) _data.Layouts.Remove(k);
+			if (keys.Count > 0) Persist();
+		}
+
 		public static void Assign(string exe, string group)
 		{
 			if (!_data.Groups.Contains(group)) _data.Groups.Add(group);
@@ -219,6 +241,7 @@ namespace StageManager.Services
 						d.Groups ??= new();
 						d.Rules ??= new();
 						d.Splits ??= new();
+						d.Layouts = new Dictionary<string, int[]>(d.Layouts ?? new(), StringComparer.OrdinalIgnoreCase);
 						return d;
 					}
 				}
@@ -229,13 +252,18 @@ namespace StageManager.Services
 
 		private static void Save()
 		{
+			Persist();
+			Changed?.Invoke();
+		}
+
+		private static void Persist()
+		{
 			try
 			{
 				Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
 				File.WriteAllText(FilePath, JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true }));
 			}
 			catch (Exception ex) { Log.Info("GROUPS", $"Save failed: {ex.Message}"); }
-			Changed?.Invoke();
 		}
 	}
 }

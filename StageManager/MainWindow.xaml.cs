@@ -214,6 +214,8 @@ namespace StageManager
 
 			SceneManager.RestoreMinimizedInvisibly(sceneModel.Scene);
 
+			// Lay the incoming scene out first: the flying card must land where the window will be.
+			SceneManager.ApplyStageLayout(sceneModel.Scene);
 			var sidebarSlot = GetSceneThumbnailScreenBounds(sceneModel);
 			var incomingTarget = GetSceneWindowBounds(sceneModel);
 			Log.Info("TRANSITION", $"Bounds: sidebarSlot={sidebarSlot} incomingTarget={incomingTarget}");
@@ -392,6 +394,8 @@ namespace StageManager
 			SceneManager.SceneChanged += SceneManager_SceneChanged;
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
+			UpdateStageAreaCache();
+			SceneManager.StageArea = () => _stageAreaCache;
 
 			// Wire up drag-and-drop manager
 			_dragDropManager = new DragDropManager(
@@ -568,9 +572,23 @@ namespace StageManager
 			RefreshIconOverlay();
 		}
 
+		// Stage = work area right of the sidebar, in physical px. Cached on the UI thread because
+		// SceneManager lays windows out from background threads too.
+		private System.Drawing.Rectangle _stageAreaCache;
+		private const double SidebarStripDip = 170;
+
+		private void UpdateStageAreaCache()
+		{
+			if (_thisHandle == IntPtr.Zero) return;
+			var wa = System.Windows.Forms.Screen.FromHandle(_thisHandle).WorkingArea;
+			int strip = (int)Math.Round(SidebarStripDip * Dpi.X);
+			_stageAreaCache = new System.Drawing.Rectangle(wa.Left + strip, wa.Top, Math.Max(1, wa.Width - strip), wa.Height);
+		}
+
 		protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
 		{
 			base.OnRenderSizeChanged(sizeInfo);
+			UpdateStageAreaCache();
 			var area = this.GetMonitorWorkSize();
 			// Stay parked off-screen until the startup slide-in animation finishes; otherwise this
 			// firing during the initial layout pass yanks the window back to Left=0 and leaks the
@@ -2095,6 +2113,11 @@ namespace StageManager
 				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
 			}
 
+			menu.Items.Add(Item("Reset to automatic layout", () =>
+			{
+				Services.AppGroups.ClearLayouts(model.Scene.Key);
+				SceneManager.ApplyStageLayout(model.Scene);
+			}));
 			menu.Items.Add(Item("Make all apps this size (stacked)", () => StackAllLike(model)));
 			menu.Items.Add(Item("Show only this app", () =>
 			{
@@ -2170,6 +2193,7 @@ namespace StageManager
 		private void RefreshSettingsMenuChecks()
 		{
 			menuClickDesktop.IsChecked = Settings.GetClickDesktopToShowDesktop();
+			menuAutoArrange.IsChecked = Settings.GetAutoArrange();
 
 			var ms = Settings.GetAnimationDurationMs();
 			foreach (var item in new[] { menuAnimOff, menuAnimFast, menuAnimNormal, menuAnimSlow })
@@ -2183,6 +2207,12 @@ namespace StageManager
 		private void MenuItem_ClickDesktop_Click(object sender, RoutedEventArgs e)
 		{
 			Settings.SetClickDesktopToShowDesktop(!Settings.GetClickDesktopToShowDesktop());
+			RefreshSettingsMenuChecks();
+		}
+
+		private void MenuItem_AutoArrange_Click(object sender, RoutedEventArgs e)
+		{
+			Settings.SetAutoArrange(!Settings.GetAutoArrange());
 			RefreshSettingsMenuChecks();
 		}
 

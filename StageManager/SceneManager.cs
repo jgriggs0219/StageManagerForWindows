@@ -190,6 +190,10 @@ namespace StageManager
 				_lastFocusedWindow = window; // remember for scene restore
 				SwitchToSceneByWindow(window).SafeFireAndForget();
 			}
+			else if (type == WindowUpdateType.MoveEnd)
+			{
+				RememberHandPlacement(window);
+			}
 			else if (type == WindowUpdateType.MinimizeStart)
 			{
 				OnWindowMinimized(window);
@@ -686,6 +690,9 @@ namespace StageManager
 					WindowStrategy.Hide(o);
 				}
 
+				// Size + centre (or side-by-side) before anything is shown, so windows appear in place.
+				ApplyStageLayout(scene);
+
 				// Phase2: bring in target-scene windows.
 				if (scene is object)
 				{
@@ -818,6 +825,135 @@ namespace StageManager
 			}
 		}
 
+		/// <summary>
+		/// The stage — the work area right of the sidebar — in physical pixels. Set by MainWindow.
+		/// </summary>
+		public Func<System.Drawing.Rectangle>? StageArea { get; set; }
+
+		private const int StageMargin = 24;
+		private const int StageGap = 16;
+
+		private static string LayoutKey(Scene scene, IWindow w, int dupIndex) =>
+			$"{scene.Key}|{w.ProcessFileName}{(dupIndex > 0 ? "#" + dupIndex : "")}";
+
+		/// <summary>
+		/// Sizes and positions a scene's windows for the stage: one app gets a standard size,
+		/// centred; combined apps get equal side-by-side columns. A spot the user chose by hand
+		/// (remembered on move/resize) always wins. Maximized and minimized windows are left
+		/// alone. Parked windows get their return point updated, so Show lands them there.
+		/// </summary>
+		public void ApplyStageLayout(Scene? scene)
+		{
+			if (scene is null || !Settings.GetAutoArrange() || StageArea is null)
+				return;
+
+			var area = StageArea();
+			if (area.Width <= 0 || area.Height <= 0)
+				return;
+
+			var windows = scene.Windows.ToArray()
+				.Where(w => !Win32.IsIconic(w.Handle) && !Win32.IsZoomed(w.Handle))
+				.OrderBy(w => w.ProcessFileName, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(w => w.Handle.ToInt64())
+				.ToArray();
+			if (windows.Length == 0)
+				return;
+
+			int n = windows.Length;
+			int innerW = area.Width - 2 * StageMargin, innerH = area.Height - 2 * StageMargin;
+			int colW = (innerW - (n - 1) * StageGap) / n;
+
+			var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+			for (int i = 0; i < n; i++)
+			{
+				var w = windows[i];
+				var exe = w.ProcessFileName ?? "";
+				seen[exe] = seen.TryGetValue(exe, out var c) ? c + 1 : 0;
+
+				int x, y, width, height;
+				if (AppGroups.GetLayout(LayoutKey(scene, w, seen[exe])) is int[] r)
+				{
+					(x, y, width, height) = (r[0], r[1], r[2], r[3]);
+				}
+				else
+				{
+					x = area.Left + StageMargin + i * (colW + StageGap);
+					y = area.Top + StageMargin;
+					width = colW;
+					height = innerH;
+				}
+
+				// Keep it on the stage whatever was remembered (monitor or sidebar changes).
+				width = Math.Min(width, area.Width);
+				height = Math.Min(height, area.Height);
+				x = Math.Clamp(x, area.Left, area.Right - width);
+				y = Math.Clamp(y, area.Top, area.Bottom - height);
+
+				PlaceVisibleRect(w.Handle, x, y, width, height);
+			}
+		}
+
+		/// <summary>
+		/// Positions a window so its VISIBLE frame is exactly the given rect. Windows 10/11 draw
+		/// an invisible resize border around most windows, so SetWindowPos alone leaves gaps.
+		/// </summary>
+		private static void PlaceVisibleRect(IntPtr hwnd, int x, int y, int w, int h)
+		{
+			var outer = new Win32.Rect();
+			Win32.GetWindowRect(hwnd, ref outer);
+			int l = 0, t = 0, rgt = 0, b = 0;
+			if (Win32.DwmGetWindowAttribute(hwnd, (int)Win32.DwmWindowAttribute.DWMWA_EXTENDED_FRAME_BOUNDS, out Win32.Rect frame, Marshal.SizeOf<Win32.Rect>()) == 0)
+			{
+				l = frame.Left - outer.Left; t = frame.Top - outer.Top;
+				rgt = outer.Right - frame.Right; b = outer.Bottom - frame.Bottom;
+			}
+			int ox = x - l, oy = y - t, ow = w + l + rgt, oh = h + t + b;
+
+			if (OpacityWindowStrategy.TrySetOriginalPosition(hwnd, ox, oy))
+			{
+				// Parked: resize in place; Show brings it back to (ox, oy).
+				Win32.SetWindowPos(hwnd, IntPtr.Zero, 0, 0, ow, oh,
+					Win32.SetWindowPosFlags.IgnoreMove | Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate);
+			}
+			else
+			{
+				Win32.SetWindowPos(hwnd, IntPtr.Zero, ox, oy, ow, oh,
+					Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate);
+			}
+		}
+
+		/// <summary>
+		/// The user finished moving/resizing a window: remember that spot for its tile, so the
+		/// automatic layout uses it from now on (also after restarts). Checked a moment later so
+		/// drags that end in the sidebar (parking the window) aren't remembered.
+		/// </summary>
+		private void RememberHandPlacement(IWindow window)
+		{
+			var dispatcher = Application.Current?.Dispatcher;
+			if (dispatcher is null) return;
+			dispatcher.BeginInvoke(new Action(async () =>
+			{
+				await Task.Delay(400);
+				var scene = FindSceneForWindow(window);
+				if (scene is null || !ReferenceEquals(scene, _current)) return;
+				if (OpacityWindowStrategy.TryGetOriginalPosition(window.Handle, out _, out _)) return;
+				if (Win32.IsIconic(window.Handle) || Win32.IsZoomed(window.Handle)) return;
+				if (Win32.DwmGetWindowAttribute(window.Handle, (int)Win32.DwmWindowAttribute.DWMWA_EXTENDED_FRAME_BOUNDS, out Win32.Rect f, Marshal.SizeOf<Win32.Rect>()) != 0) return;
+
+				var area = StageArea?.Invoke() ?? System.Drawing.Rectangle.Empty;
+				var cx = (f.Left + f.Right) / 2;
+				if (!area.IsEmpty && cx < area.Left) return; // dropped over the sidebar
+
+				var exe = window.ProcessFileName ?? "";
+				var dup = scene.Windows.ToArray()
+					.Where(w => string.Equals(w.ProcessFileName, exe, StringComparison.OrdinalIgnoreCase) && !Win32.IsIconic(w.Handle) && !Win32.IsZoomed(w.Handle))
+					.OrderBy(w => w.Handle.ToInt64()).ToList().IndexOf(window);
+				var key = LayoutKey(scene, window, Math.Max(0, dup));
+				AppGroups.SaveLayout(key, f.Left, f.Top, f.Right - f.Left, f.Bottom - f.Top);
+				Log.Window("LAYOUT", $"Remembered hand placement {key} = ({f.Left},{f.Top} {f.Right - f.Left}x{f.Bottom - f.Top})", window);
+			}));
+		}
+
 		public Task MoveWindow(Scene sourceScene, IWindow window, Scene targetScene)
 		{
 			try
@@ -845,6 +981,9 @@ namespace StageManager
 						_scenes.Remove(sourceScene);
 					SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Removed));
 				}
+
+				if (targetScene.Equals(_current))
+					ApplyStageLayout(targetScene); // a new app joined the stage: re-arrange side by side
 
 				if (targetScene.Equals(_current))
 				{
