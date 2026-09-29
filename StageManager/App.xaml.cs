@@ -20,6 +20,7 @@ namespace StageManager
 			FrameClock.Start();
 
 			RestoreScenesPath = ParseRestoreScenesArg(e.Args);
+			IsAutostart = Array.IndexOf(e.Args, "--autostart") >= 0;
 			UpdateService.CleanupOldVersion();
 			if (RestoreScenesPath is null)
 				UpdateService.CleanupStagingFolder();
@@ -61,6 +62,9 @@ namespace StageManager
 				Log.Fatal("CRASH", $"Unobserved task: {args.Exception}");
 			};
 		}
+
+		/// <summary>Started by the Windows startup entry (login), not by the user.</summary>
+		public static bool IsAutostart { get; private set; }
 
 		private static DateTime _uiErrorWindowStart = DateTime.MinValue;
 		private static int _uiErrorCount;

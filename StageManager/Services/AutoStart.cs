@@ -29,6 +29,7 @@ namespace StageManager.Services
 
 		private static string GetValueAsString(RegistryKey key, string appName) => key.GetValue(appName)?.ToString() ?? "";
 
-		private static string GetAppPath() => $@"""{Environment.ProcessPath}""";
+		// --autostart tells Stage Manager it was started at login, so it reopens the user's apps.
+		private static string GetAppPath() => $@"""{Environment.ProcessPath}"" --autostart";
 	}
 }

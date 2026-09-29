@@ -397,6 +397,13 @@ namespace StageManager
 			UpdateStageAreaCache();
 			SceneManager.StageArea = () => _stageAreaCache;
 
+			// Put whatever is on stage in its place right away (standard size / remembered spot).
+			_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() => SceneManager.ApplyStageLayout(SceneManager.CurrentScene)));
+
+			// Started at login: reopen the grouped apps that were open last time.
+			if (App.IsAutostart)
+				Services.AppRelauncher.RelaunchMissingAsync().SafeFireAndForget();
+
 			// Wire up drag-and-drop manager
 			_dragDropManager = new DragDropManager(
 				SceneManager,
@@ -1537,7 +1544,12 @@ namespace StageManager
 
 			bool doesOverlap(IWindowLocation loc) => loc.State == Native.Window.WindowState.Maximized || (loc.State == Native.Window.WindowState.Normal && loc.X < _lastWidth * STOW_OVERLAP_FRACTION);
 
-			var anyOverlappingWindows = windows.Any(w => doesOverlap(w.Location));
+			// Only real, visible windows count. Apps like TradingView keep an invisible, untitled
+			// helper window at (0,0) in their scene; counting it hid the sidebar for that app even
+			// though its actual window was laid out clear of the sidebar like every other app.
+			var anyOverlappingWindows = windows
+				.Where(w => Win32.IsWindowVisible(w.Handle) && !Win32.IsIconic(w.Handle) && !string.IsNullOrWhiteSpace(w.Title))
+				.Any(w => doesOverlap(w.Location));
 
 			var containsMouse = Interlocked.Read(ref _mouseX) <= _lastWidth;
 			var setMode = Mode == WindowMode.OnScreen && !containsMouse
@@ -1912,6 +1924,18 @@ namespace StageManager
 				SceneManager.RegroupWindows();
 			};
 			regroupTimer.Start();
+
+			// Remember which grouped apps are open, so a login can reopen them (AppRelauncher).
+			var relaunchTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+			relaunchTimer.Tick += (_, _) =>
+			{
+				var pids = AllScenes.Where(s => s is not null && s.GroupName.Length > 0)
+					.SelectMany(s => s!.Windows)
+					.Select(w => w.Window?.ProcessId ?? -1)
+					.Where(pid => pid > 0);
+				Services.AppRelauncher.Remember(pids);
+			};
+			relaunchTimer.Start();
 		}
 
 		/// <summary>

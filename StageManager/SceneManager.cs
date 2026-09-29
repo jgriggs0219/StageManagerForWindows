@@ -1269,6 +1269,8 @@ namespace StageManager
 		/// </summary>
 		public void RestoreWindow(IWindow window) => WindowStrategy.Show(window);
 
+		public Scene? CurrentScene => _current;
+
 		public bool IsDesktopView => _current is null;
 
 		public IWindow[] GetSceneableWindowsSnapshot() => GetSceneableWindows().ToArray();
