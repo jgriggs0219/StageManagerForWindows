@@ -448,6 +448,8 @@ namespace StageManager.Model
 		private bool _isHiddenButReserved;
 
 		public System.Windows.Visibility Visibility =>
+			// The on-stage app's stand-in only holds space: never drawn, never collapsed.
+			IsStageSlot ? System.Windows.Visibility.Hidden :
 			IsVisible ? System.Windows.Visibility.Visible :
 			IsHiddenButReserved ? System.Windows.Visibility.Hidden :
 			System.Windows.Visibility.Collapsed;
