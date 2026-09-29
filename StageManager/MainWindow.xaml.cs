@@ -419,6 +419,13 @@ namespace StageManager
 			SceneManager.CurrentSceneSelectionChanged += SceneManager_CurrentSceneSelectionChanged;
 			SceneManager.AnimatedSwitch = scene => Dispatcher.InvokeAsync(() => AnimatedSwitchTo(scene)).Task.Unwrap();
 			UpdateStageAreaCache();
+
+			// Virtual desktops: each has its own groups. Explorer updates the current desktop in the
+			// registry the instant a switch starts; poll it and re-filter the sidebar.
+			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); _groupView?.Refresh(); RefreshIconOverlay(); };
+			var desktopTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+			desktopTimer.Tick += (_, _) => { if (!_sceneTransitionAnimator.IsAnimating) SceneManager.PollVirtualDesktop(); };
+			desktopTimer.Start();
 			SceneManager.StageArea = () => _stageAreaCache;
 
 			// Put whatever is on stage in its place right away (standard size / remembered spot).
@@ -1098,7 +1105,10 @@ namespace StageManager
 			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
 			// Custom sorts don't re-sort live: move the group on stage to the top explicitly.
 			if (activeGroup != _lastActiveGroup) { _lastActiveGroup = activeGroup; Dispatcher.BeginInvoke(new Action(() => _groupView?.Refresh())); }
-			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
+			// Only this desktop's apps (and its own groups' headers) belong in the sidebar.
+			foreach (var off in Scenes.ToArray().Where(s => !s.IsPlaceholder && !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+				off.IsVisible = false;
+			var scenes = Scenes.ToArray().Where(s => s.IsPlaceholder || SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 			int ungrouped = 0; // grouped apps always show; the recent-apps cap is for ungrouped ones
 
 			if (_filterProcessKey == null)
@@ -1183,7 +1193,10 @@ namespace StageManager
 		{
 			var iconGen = ++_filterIconGen;
 
-			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
+			// Only this desktop's apps (and its own groups' headers) belong in the sidebar.
+			foreach (var off in Scenes.ToArray().Where(s => !s.IsPlaceholder && !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
+				off.IsVisible = false;
+			var scenes = Scenes.ToArray().Where(s => s.IsPlaceholder || SceneManager.IsSceneOnCurrentDesktop(s.Scene)).OrderByDescending(s => s.Updated).ToArray();
 			bool[] target = new bool[scenes.Length];
 			if (_filterProcessKey == null)
 			{
@@ -1751,6 +1764,8 @@ namespace StageManager
 					: System.IO.Path.GetFileNameWithoutExtension(stage.ProcessKey ?? "") ;
 				if (name.Length > 0)
 					_stageBar.SetGroup(name, groupColor, GetWorkAreaBounds());
+				else
+					_stageBar.Hide(); // nothing on stage on this desktop
 			}
 			catch (Exception ex) { Log.Info("FRAME", $"Stage frame update failed: {ex.Message}"); }
 		}

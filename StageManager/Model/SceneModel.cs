@@ -373,8 +373,12 @@ namespace StageManager.Model
 				return;
 			}
 			var w = Windows.FirstOrDefault()?.Window;
-			GroupName = w is null ? "" : Services.AppGroups.GetEffectiveGroup(w.Handle, w.ProcessFileName, w.Title);
-			GroupOrder = Services.AppGroups.GetOrder(GroupName);
+			// Read from the set of the desktop this window lives on (each desktop has its own groups).
+			using (Services.AppGroups.For(w is null ? Guid.Empty : Native.VirtualDesktop.DesktopOf(w.Handle)))
+			{
+				GroupName = w is null ? "" : Services.AppGroups.GetEffectiveGroup(w.Handle, w.ProcessFileName, w.Title);
+				GroupOrder = Services.AppGroups.GetOrder(GroupName);
+			}
 			RaisePropertyChanged(nameof(GroupColor));
 		}
 

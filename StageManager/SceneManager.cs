@@ -159,6 +159,15 @@ namespace StageManager
 				return;
 			}
 
+			// Virtual desktops: during a desktop switch, and for windows that live on another
+			// desktop, focus/show events are the OS shuffling windows, not the user picking a tile.
+			if ((type == WindowUpdateType.Foreground || type == WindowUpdateType.Show) &&
+				(DateTime.UtcNow < _desktopSettleUntil || !VirtualDesktop.IsOnCurrentDesktop(window.Handle)))
+			{
+				Log.Window("VDESK", $"{type} ignored (desktop switch / other desktop)", window);
+				return;
+			}
+
 			if (type == WindowUpdateType.Foreground)
 			{
 				// Skip rapid focus changes to prevent scene switching loops
@@ -406,6 +415,7 @@ namespace StageManager
 		private void WindowsManager_WindowDestroyed(IWindow window)
 		{
 			Log.Window("EVENT", "WindowDestroyed", window);
+			VirtualDesktop.Forget(window.Handle);
 			AppGroups.ForgetWindow(window.Handle);
 			_lastFocusHandoffAt = DateTime.UtcNow;
 
@@ -665,6 +675,8 @@ namespace StageManager
 				var otherWindows = GetSceneableWindows()
 					.Except(scene?.Windows ?? Array.Empty<IWindow>())
 					.Where(w => scene is null || w.Handle != foregroundHandle)
+					// Only this desktop: windows on other desktops keep their own stage.
+					.Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle))
 					.ToArray();
 
 				var prior = _current;
@@ -700,7 +712,7 @@ namespace StageManager
 					// Bottom-most first: Show ends in BringWindowToTop, so whichever window is
 					// shown last ends up on top. Feeding them in reverse depth order replays the
 					// stacking the scene had when it was last on screen.
-					foreach (var w in OrderBottomToTop(scene.Windows))
+					foreach (var w in OrderBottomToTop(scene.Windows.ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle)).ToArray()))
 					{
 						// Option1: Restore-then-clear for any minimized window in the active scene.
 						// A window the user minimized stays minimized: Show below skips iconic
@@ -727,7 +739,7 @@ namespace StageManager
 					if (_lastFocusedWindow is object && scene.Windows.Contains(_lastFocusedWindow) && !_lastFocusedWindow.IsMinimized)
 						focusCandidate = _lastFocusedWindow;
 					else
-						focusCandidate = OrderBottomToTop(scene.Windows).LastOrDefault(w => !w.IsMinimized);
+						focusCandidate = OrderBottomToTop(scene.Windows.ToArray().Where(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle)).ToArray()).LastOrDefault(w => !w.IsMinimized);
 
 					Log.Window("SWITCH", "Focus candidate", focusCandidate ?? scene.Windows.FirstOrDefault());
 				}
@@ -1068,7 +1080,7 @@ namespace StageManager
 				var allHere = targetScene.Windows.Select(w => w.ProcessFileName ?? "").Distinct(StringComparer.OrdinalIgnoreCase)
 					.Where(exe => GetSceneableWindows().Where(w => string.Equals(w.ProcessFileName, exe, StringComparison.OrdinalIgnoreCase)).All(w => targetScene.Windows.Contains(w)))
 					.ToList();
-				var tileGroup = targetScene.Key.Contains('#') ? targetScene.Key.Substring(targetScene.Key.IndexOf('#') + 1) : "";
+				var tileGroup = GroupOfKey(targetScene.Key);
 				AppGroups.RecordSplit(allHere, tileGroup);
 
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Updated));
@@ -1365,6 +1377,85 @@ namespace StageManager
 
 		public Scene? CurrentScene => _current;
 
+		// ---- Virtual desktops: each desktop keeps its own groups and its own stage. ----
+		private Guid _knownDesktop = Guid.Empty;
+		private DateTime _desktopSettleUntil = DateTime.MinValue;
+		private readonly Dictionary<Guid, Scene?> _stageByDesktop = new();
+		private int _desktopTick;
+
+		/// <summary>Raised on the UI thread after the user switched virtual desktops.</summary>
+		public event EventHandler? VirtualDesktopChanged;
+
+		/// <summary>The group name part of a scene key ("pid#group@desk" → "group").</summary>
+		public static string GroupOfKey(string key)
+		{
+			var i = key.IndexOf('#');
+			if (i < 0) return "";
+			var g = key.Substring(i + 1);
+			var at = g.LastIndexOf('@');
+			return at >= 0 ? g.Substring(0, at) : g;
+		}
+
+		public static bool IsSceneOnCurrentDesktop(Scene scene) =>
+			scene.Windows.ToArray().Any(w => VirtualDesktop.IsOnCurrentDesktop(w.Handle));
+
+		/// <summary>
+		/// Called by MainWindow's timer (~250 ms). On a desktop switch only bookkeeping happens:
+		/// remember what was on stage where the user left, and treat the new desktop's own
+		/// remembered stage as current. No window is moved — Windows is already showing the
+		/// new desktop exactly as it was left.
+		/// </summary>
+		public void PollVirtualDesktop()
+		{
+			var now = VirtualDesktop.CurrentDesktopId;
+			if (now == Guid.Empty) return;
+
+			if (_knownDesktop == Guid.Empty)
+			{
+				_knownDesktop = now;
+				AdoptLegacyGroups();
+				return;
+			}
+
+			if (now != _knownDesktop)
+			{
+				_stageByDesktop[_knownDesktop] = _current;
+				_knownDesktop = now;
+				_desktopSettleUntil = DateTime.UtcNow + TimeSpan.FromMilliseconds(600);
+
+				_stageByDesktop.TryGetValue(now, out var saved);
+				var prior = _current;
+				_current = saved is not null && IsSceneOnCurrentDesktop(saved) ? saved : null;
+				Scene[] scenes;
+				lock (_scenesLock) scenes = _scenes.ToArray();
+				foreach (var s in scenes) s.IsSelected = ReferenceEquals(s, _current);
+
+				Log.Info("VDESK", $"Desktop switched → stage '{_current?.Title ?? "(none)"}'");
+				CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
+				VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
+				return;
+			}
+
+			// Every ~3 s re-read where windows live (Task View moves) — cheap, dispatcher only.
+			if (++_desktopTick % 12 == 0)
+				VirtualDesktop.Refresh(GetSceneableWindows().ToArray().Select(w => w.Handle));
+		}
+
+		/// <summary>
+		/// Groups made before per-desktop support go to the desktop where most of their apps
+		/// live right now.
+		/// </summary>
+		private void AdoptLegacyGroups()
+		{
+			if (!AppGroups.HasLegacy) return;
+			var best = GetSceneableWindows().ToArray()
+				.GroupBy(w => VirtualDesktop.DesktopOf(w.Handle))
+				.OrderByDescending(g => g.Count())
+				.Select(g => g.Key)
+				.FirstOrDefault();
+			AppGroups.AdoptLegacy(best == Guid.Empty ? _knownDesktop : best);
+		}
+
 		public bool IsDesktopView => _current is null;
 
 		public IWindow[] GetSceneableWindowsSnapshot() => GetSceneableWindows().ToArray();
@@ -1434,8 +1525,14 @@ namespace StageManager
 		// create a separate scene.
 		// One scene per app (or remembered split of apps) per user group: a Chrome window given
 		// its own group gets its own tile; apps the user combined share one again after restart.
-		private string GetWindowGroupKey(IWindow window) =>
-			$"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetEffectiveGroup(window.Handle, window.ProcessFileName, window.Title)}";
+		// Keys also carry the window's virtual desktop: each desktop has its own groups, combos
+		// and saved positions, and a tile never spans desktops.
+		private string GetWindowGroupKey(IWindow window)
+		{
+			var desk = VirtualDesktop.DesktopOf(window.Handle);
+			using (AppGroups.For(desk))
+				return $"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetEffectiveGroup(window.Handle, window.ProcessFileName, window.Title)}@{desk:N}";
+		}
 
 		public void Dispose()
 		{

@@ -28,7 +28,106 @@ namespace StageManager.Services
 		private static readonly string FilePath = Path.Combine(
 			Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StageManager", "groups.json");
 
-		private static Data _data = Load();
+		// One independent set of groups (apps, rules, combos, positions) per virtual desktop,
+		// keyed by the desktop's id. Nothing is mirrored between desktops.
+		private sealed class Root
+		{
+			public Dictionary<string, Data> Desktops { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+			/// <summary>Pre-desktop groups.json, waiting to be given to a desktop (AdoptLegacy).</summary>
+			public Data? Legacy { get; set; }
+		}
+
+		private static readonly Root _root = LoadRoot();
+
+		// Which desktop's set the calls on this thread use; null = the current desktop.
+		[ThreadStatic] private static string? _ctx;
+
+		private static Data _data
+		{
+			get
+			{
+				var k = _ctx ?? Native.VirtualDesktop.CurrentDesktopId.ToString();
+				lock (_root)
+				{
+					if (!_root.Desktops.TryGetValue(k, out var d))
+						_root.Desktops[k] = d = new Data();
+					return d;
+				}
+			}
+		}
+
+		/// <summary>
+		/// Scopes AppGroups calls on this thread to one desktop's set — for looking up a window
+		/// that lives on another desktop. Dispose to restore.
+		/// </summary>
+		public static IDisposable For(Guid desktop)
+		{
+			var prev = _ctx;
+			if (desktop != Guid.Empty) _ctx = desktop.ToString();
+			return new Restore(prev);
+		}
+
+		private sealed class Restore : IDisposable
+		{
+			private readonly string? _prev;
+			public Restore(string? prev) => _prev = prev;
+			public void Dispose() => _ctx = _prev;
+		}
+
+		/// <summary>True while groups from before per-desktop support still need a home.</summary>
+		public static bool HasLegacy => _root.Legacy is not null;
+
+		/// <summary>Gives the pre-desktop groups to one desktop (where most of those apps live).</summary>
+		public static void AdoptLegacy(Guid desktop)
+		{
+			if (_root.Legacy is null || desktop == Guid.Empty) return;
+			lock (_root)
+			{
+				var k = desktop.ToString();
+				if (!_root.Desktops.TryGetValue(k, out var existing) || existing.Groups.Count == 0)
+					_root.Desktops[k] = _root.Legacy;
+				_root.Legacy = null;
+			}
+			Log.Info("GROUPS", $"Existing groups assigned to desktop {desktop}");
+			Save();
+		}
+
+		private static Data Normalize(Data d)
+		{
+			d.Apps = new Dictionary<string, string>(d.Apps ?? new(), StringComparer.OrdinalIgnoreCase);
+			d.Groups ??= new();
+			d.Rules ??= new();
+			d.Splits ??= new();
+			d.Layouts = new Dictionary<string, int[]>(d.Layouts ?? new(), StringComparer.OrdinalIgnoreCase);
+			d.SplitGroups = new Dictionary<string, string>(d.SplitGroups ?? new(), StringComparer.OrdinalIgnoreCase);
+			return d;
+		}
+
+		private static Root LoadRoot()
+		{
+			try
+			{
+				if (File.Exists(FilePath))
+				{
+					var text = File.ReadAllText(FilePath);
+					using var doc = JsonDocument.Parse(text);
+					if (doc.RootElement.TryGetProperty("Desktops", out _))
+					{
+						var r = JsonSerializer.Deserialize<Root>(text) ?? new Root();
+						r.Desktops = new Dictionary<string, Data>(
+							(r.Desktops ?? new()).ToDictionary(kv => kv.Key, kv => Normalize(kv.Value)), StringComparer.OrdinalIgnoreCase);
+						if (r.Legacy is not null) Normalize(r.Legacy);
+						return r;
+					}
+					// Old single-set file: keep it aside until a desktop adopts it.
+					var legacy = JsonSerializer.Deserialize<Data>(text);
+					return new Root { Legacy = legacy is null ? null : Normalize(legacy) };
+				}
+			}
+			catch (Exception ex) { Log.Info("GROUPS", $"Load failed, starting empty: {ex.Message}"); }
+			return new Root();
+		}
+
 
 		/// <summary>Raised on any change. Subscribers refresh the sidebar.</summary>
 		public static event Action? Changed;
@@ -278,28 +377,6 @@ namespace StageManager.Services
 			Save();
 		}
 
-		private static Data Load()
-		{
-			try
-			{
-				if (File.Exists(FilePath))
-				{
-					var d = JsonSerializer.Deserialize<Data>(File.ReadAllText(FilePath));
-					if (d is not null)
-					{
-						d.Apps = new Dictionary<string, string>(d.Apps ?? new(), StringComparer.OrdinalIgnoreCase);
-						d.Groups ??= new();
-						d.Rules ??= new();
-						d.Splits ??= new();
-						d.Layouts = new Dictionary<string, int[]>(d.Layouts ?? new(), StringComparer.OrdinalIgnoreCase);
-						d.SplitGroups = new Dictionary<string, string>(d.SplitGroups ?? new(), StringComparer.OrdinalIgnoreCase);
-						return d;
-					}
-				}
-			}
-			catch (Exception ex) { Log.Info("GROUPS", $"Load failed, starting empty: {ex.Message}"); }
-			return new Data();
-		}
 
 		private static void Save()
 		{
@@ -312,7 +389,7 @@ namespace StageManager.Services
 			try
 			{
 				Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-				File.WriteAllText(FilePath, JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true }));
+				File.WriteAllText(FilePath, JsonSerializer.Serialize(_root, new JsonSerializerOptions { WriteIndented = true }));
 			}
 			catch (Exception ex) { Log.Info("GROUPS", $"Save failed: {ex.Message}"); }
 		}

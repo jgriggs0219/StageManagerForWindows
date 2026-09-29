@@ -52,6 +52,74 @@ namespace StageManager.Native
 		public static bool IsShellCloaked(IntPtr hwnd) =>
 			DwmGetWindowAttribute(hwnd, 14 /* DWMWA_CLOAKED */, out var v, sizeof(int)) == 0 && (v & 0x2 /* DWM_CLOAKED_SHELL */) != 0;
 
+		private const string RegKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops";
+		private static readonly System.Collections.Generic.Dictionary<IntPtr, Guid> _windowDesktop = new();
+
+		/// <summary>The desktop the user is looking at, from Explorer's registry state (instant, callback-safe).</summary>
+		public static Guid CurrentDesktopId
+		{
+			get
+			{
+				try
+				{
+					using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RegKey);
+					if (key?.GetValue("CurrentVirtualDesktop") is byte[] b && b.Length == 16)
+						return new Guid(b);
+				}
+				catch { }
+				return Guid.Empty;
+			}
+		}
+
+		/// <summary>
+		/// The desktop a window lives on, cached. The shell can't answer inside a WinEvent
+		/// callback; then the current desktop is assumed (without caching), which is right for
+		/// any window that just appeared.
+		/// </summary>
+		public static Guid DesktopOf(IntPtr hwnd)
+		{
+			lock (_windowDesktop)
+				if (_windowDesktop.TryGetValue(hwnd, out var cached))
+					return cached;
+			var m = Manager;
+			if (m is not null && hwnd != IntPtr.Zero)
+			{
+				try
+				{
+					if (m.GetWindowDesktopId(hwnd, out var id) == 0 && id != Guid.Empty)
+					{
+						lock (_windowDesktop) _windowDesktop[hwnd] = id;
+						return id;
+					}
+				}
+				catch { _manager = null; }
+			}
+			return CurrentDesktopId;
+		}
+
+		public static bool IsOnCurrentDesktop(IntPtr hwnd) => DesktopOf(hwnd) == CurrentDesktopId;
+
+		public static void Forget(IntPtr hwnd)
+		{
+			lock (_windowDesktop) _windowDesktop.Remove(hwnd);
+		}
+
+		/// <summary>Re-reads where windows live (the user can move them in Task View). Dispatcher only.</summary>
+		public static void Refresh(System.Collections.Generic.IEnumerable<IntPtr> handles)
+		{
+			var m = Manager;
+			if (m is null) return;
+			foreach (var h in handles)
+			{
+				try
+				{
+					if (m.GetWindowDesktopId(h, out var id) == 0 && id != Guid.Empty)
+						lock (_windowDesktop) _windowDesktop[h] = id;
+				}
+				catch { _manager = null; return; }
+			}
+		}
+
 		/// <summary>True when the shell reports the window as belonging to no desktop (shown on all).</summary>
 		public static bool IsUnassigned(IntPtr hwnd)
 		{
