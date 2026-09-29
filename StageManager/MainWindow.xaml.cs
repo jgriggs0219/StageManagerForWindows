@@ -1111,12 +1111,14 @@ namespace StageManager
 				if (!_groupRecency.TryGetValue(m.GroupName, out var t) || m.Updated > t) _groupRecency[m.GroupName] = m.Updated;
 			foreach (var kv in _groupLastActive)
 				if (!_groupRecency.TryGetValue(kv.Key, out var t2) || kv.Value > t2) _groupRecency[kv.Key] = kv.Value;
-			// Group order: pinned (in pin order), then the group on stage, then by recent use.
+			// Steady group order (moving whole groups forces a sidebar rebuild, which blinked every
+			// tile): pinned first, then the user's own group order (Move up/down), ungrouped last.
+			// Only apps INSIDE a group follow most-recent-use — that re-orders in place, no blink.
 			var pinned = Services.AppGroups.Pinned;
-			var groupOrder = pinned.Where(g => Scenes.Any(m => m.GroupName == g)).ToList();
-			if (activeGroup.Length > 0 && !groupOrder.Contains(activeGroup)) groupOrder.Add(activeGroup);
-			groupOrder.AddRange(_groupRecency.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).Where(g => !groupOrder.Contains(g)));
-			groupOrder.AddRange(Scenes.Select(m => m.GroupName).Distinct().Where(g => !groupOrder.Contains(g)));
+			var groupOrder = pinned.ToList();
+			groupOrder.AddRange(Services.AppGroups.Groups.Where(g => !groupOrder.Contains(g)));
+			groupOrder.AddRange(Scenes.Select(m => m.GroupName).Distinct().Where(g => g.Length > 0 && !groupOrder.Contains(g)));
+			groupOrder.Add("");
 			foreach (var grp in Scenes.GroupBy(m => m.GroupName))
 			{
 				long rank = groupOrder.IndexOf(grp.Key);
