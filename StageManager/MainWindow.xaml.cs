@@ -108,6 +108,8 @@ namespace StageManager
 		// and scene previews stay culled while setup runs (scenes added, foreground scene switched).
 		private bool _startupSlideComplete = false;
 
+		private DateTime _lastSidebarSwitchAt = DateTime.MinValue;
+
 		public event PropertyChangedEventHandler? PropertyChanged;
 
 		public bool EnableWindowPullToScene = true;
@@ -151,7 +153,18 @@ namespace StageManager
 					ClearAppFilter();
 				var sceneModel = (SceneModel)model;
 				if (sceneModel.IsPlaceholder) return;
+
+				// After a switch the sidebar reshuffles (the old app drops in, the new one leaves),
+				// so a quick follow-up click can land on a tile that just slid under the cursor.
+				// Ignore sidebar clicks for a moment after each switch.
+				if (DateTime.UtcNow - _lastSidebarSwitchAt < TimeSpan.FromMilliseconds(600))
+				{
+					Log.Info("TRANSITION", $"Ignored click on '{sceneModel.Title}' right after a switch");
+					return;
+				}
+				_lastSidebarSwitchAt = DateTime.UtcNow;
 				await AnimatedSwitchTo(sceneModel.Scene);
+				_lastSidebarSwitchAt = DateTime.UtcNow;
 			});
 
 			_iconOverlay.OnIconClicked = ToggleAppFilter;
@@ -233,11 +246,9 @@ namespace StageManager
 			// it back at the moment the cards actually cover what it hides.
 			void HideWhatTheCardsCover()
 			{
-				if (outgoingSource != Rect.Empty)
-				{
-					Log.Info("TRANSITION", "Pre-hiding current scene windows");
-					SceneManager.HideCurrentSceneWindows();
-				}
+				// The outgoing app is NOT hidden here any more: it stays on stage underneath the
+				// incoming card and is parked by SwitchTo only once the new app has landed. Hiding it
+				// up front left an empty stage (the desktop) showing for the whole flight.
 
 				// The clicked tile is about to be hidden and the tray rebuilt around it, so no
 				// tile still under the cursor will get its MouseLeave. Unwind hover state now,

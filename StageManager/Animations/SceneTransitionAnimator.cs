@@ -279,7 +279,9 @@ namespace StageManager.Animations
 		[System.Diagnostics.CodeAnalysis.MemberNotNull(nameof(_overlay))]
 		private void EnsureOverlay(Rect bounds)
 		{
-			_overlay ??= new TransitionOverlayWindow();
+			// Topmost: the outgoing app now stays on stage during the flight, and the cards must
+			// draw over it. Safe — the overlay is click-through and empty between transitions.
+			_overlay ??= new TransitionOverlayWindow { Topmost = true };
 			_overlay.PositionFrom(bounds);
 		}
 
