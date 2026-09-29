@@ -132,6 +132,7 @@ namespace StageManager
 			WindowsManager.WindowUpdated += WindowsManager_WindowUpdated;
 			WindowsManager.WindowDestroyed += WindowsManager_WindowDestroyed;
 			WindowsManager.DesktopShortClick += WindowsManager_DesktopShortClick;
+			WindowsManager.ShellCloakChanged += OnShellCloakChanged;
 
 			await WindowsManager.Start();
 
@@ -1423,6 +1424,25 @@ namespace StageManager
 		/// <summary>Raised on the UI thread after the user switched virtual desktops.</summary>
 		public event EventHandler? VirtualDesktopChanged;
 
+		/// <summary>
+		/// Raised on the UI thread the instant Windows starts switching desktops (it cloaks the
+		/// old desktop's windows), before the switch itself is detected — so the sidebar can hide
+		/// the old desktop's tiles instead of flashing them on the new desktop.
+		/// </summary>
+		public event EventHandler? DesktopSwitchStarting;
+		private bool _switchStartQueued;
+
+		private void OnShellCloakChanged()
+		{
+			if (_switchStartQueued) return;
+			_switchStartQueued = true;
+			Application.Current?.Dispatcher.BeginInvoke(new Action(() =>
+			{
+				_switchStartQueued = false;
+				DesktopSwitchStarting?.Invoke(this, EventArgs.Empty);
+			}));
+		}
+
 		/// <summary>The group name part of a scene key ("pid#group@desk" → "group").</summary>
 		public static string GroupOfKey(string key)
 		{
@@ -1478,7 +1498,7 @@ namespace StageManager
 			// Every ~1 s re-read where windows live. A window moved to another desktop (Task View)
 			// is re-filed under that desktop's groups and both sidebars update — before, it kept
 			// its old desktop and vanished from both.
-			if (++_desktopTick % 4 == 0 &&
+			if (++_desktopTick % 20 == 0 &&
 				VirtualDesktop.Refresh(GetSceneableWindows().ToArray().Select(w => w.Handle)))
 			{
 				Log.Info("VDESK", "Window(s) moved between desktops → re-filing");

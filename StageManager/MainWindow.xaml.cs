@@ -427,8 +427,9 @@ namespace StageManager
 
 			// Virtual desktops: each has its own groups. Explorer updates the current desktop in the
 			// registry the instant a switch starts; poll it and re-filter the sidebar.
-			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); _groupView?.Refresh(); RefreshIconOverlay(); };
-			var desktopTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+			SceneManager.VirtualDesktopChanged += (_, _) => { SyncVisibilityByUpdatedTimeStamp(); _groupView?.Refresh(); RefreshIconOverlay(); FadeInTilesAfterSwitch(); };
+			SceneManager.DesktopSwitchStarting += (_, _) => HideTilesForSwitch();
+			var desktopTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
 			desktopTimer.Tick += (_, _) => { if (!_sceneTransitionAnimator.IsAnimating) SceneManager.PollVirtualDesktop(); };
 			desktopTimer.Start();
 			SceneManager.StageArea = () => _stageAreaCache;
@@ -2078,6 +2079,46 @@ namespace StageManager
 			await Task.Delay(400);
 			try { StageManager.Composition.CaptureSession.RestartActive(); }
 			catch (Exception ex) { Log.Info("CAPSESS", $"RestartActive failed: {ex.Message}"); }
+		}
+
+		// ---- Desktop switch: never show the old desktop's tiles on the new desktop ----
+		private bool _tilesHiddenForSwitch;
+		private System.Windows.Threading.DispatcherTimer? _tilesFallback;
+
+		/// <summary>Windows just started switching desktops: hide tiles + icons immediately.</summary>
+		private void HideTilesForSwitch()
+		{
+			if (_tilesHiddenForSwitch) return;
+			_tilesHiddenForSwitch = true;
+			scenesControl.BeginAnimation(OpacityProperty, null);
+			scenesControl.Opacity = 0;
+			try { _iconOverlay.Hide(); } catch { }
+
+			// Not every shell cloak is a desktop switch (some apps cloak themselves): if no switch
+			// is detected shortly, bring the tiles back anyway.
+			_tilesFallback ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+			_tilesFallback.Stop();
+			_tilesFallback.Tick -= TilesFallback_Tick;
+			_tilesFallback.Tick += TilesFallback_Tick;
+			_tilesFallback.Start();
+		}
+
+		private void TilesFallback_Tick(object? sender, EventArgs e)
+		{
+			_tilesFallback?.Stop();
+			FadeInTilesAfterSwitch();
+		}
+
+		/// <summary>The new desktop's tiles are in place: fade them in.</summary>
+		private void FadeInTilesAfterSwitch()
+		{
+			if (!_tilesHiddenForSwitch) return;
+			_tilesHiddenForSwitch = false;
+			_tilesFallback?.Stop();
+			try { _iconOverlay.Show(GetWorkAreaBounds()); } catch { }
+			RefreshIconOverlay();
+			scenesControl.BeginAnimation(OpacityProperty,
+				new System.Windows.Media.Animation.DoubleAnimation(1, TimeSpan.FromMilliseconds(160)));
 		}
 
 		/// <summary>

@@ -68,6 +68,10 @@ namespace StageManager.Native
 		/// Notifies when a handled window was removed by the manager
 		/// </summary>
 		public event WindowDelegate? WindowDestroyed;
+
+		/// <summary>A known window was shell-cloaked/uncloaked — a virtual desktop switch is starting.
+		/// Raised inside the WinEvent callback: handlers must only note it and defer work.</summary>
+		public event Action? ShellCloakChanged;
 		/// <summary>
 		/// Notifies when a handled window was updated by the manager
 		/// This is used internally by the workspace manager to apply the update to the window
@@ -383,13 +387,13 @@ namespace StageManager.Native
 						// left. That is not the window closing: treating it as one tore down every
 						// tile at once (and crashed the sidebar). Keep known windows as they are.
 						if (_windows.ContainsKey(hwnd) && VirtualDesktop.IsShellCloaked(hwnd))
-							break;
+						{ ShellCloakChanged?.Invoke(); break; }
 						UpdateWindow(hwnd, WindowUpdateType.Hide);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
 						// ...and a known window reappearing on the way back is not a new request.
 						if (_windows.ContainsKey(hwnd))
-							break;
+						{ ShellCloakChanged?.Invoke(); break; }
 						UpdateWindow(hwnd, WindowUpdateType.Show);
 						break;
 					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:
