@@ -833,8 +833,22 @@ namespace StageManager
 		private const int StageMargin = 24;
 		private const int StageGap = 16;
 
+		/// <summary>
+		/// A name for a tile that survives restarts: the remembered split, or the app's exe +
+		/// group. The scene key itself starts with the PROCESS ID, which changes every time the
+		/// app starts — keying saved positions on it is why they were lost on every restart.
+		/// </summary>
+		public static string StableTileId(Scene scene)
+		{
+			var k = scene.Key;
+			if (k.StartsWith("split:", StringComparison.OrdinalIgnoreCase)) return k;
+			var hash = k.IndexOf('#');
+			var exe = scene.Windows.FirstOrDefault()?.ProcessFileName ?? "";
+			return exe + (hash >= 0 ? k.Substring(hash) : "");
+		}
+
 		private static string LayoutKey(Scene scene, IWindow w, int dupIndex) =>
-			$"{scene.Key}|{w.ProcessFileName}{(dupIndex > 0 ? "#" + dupIndex : "")}";
+			$"{StableTileId(scene)}|{w.ProcessFileName}{(dupIndex > 0 ? "#" + dupIndex : "")}";
 
 		/// <summary>
 		/// Sizes and positions a scene's windows for the stage: one app gets a standard size,
@@ -849,7 +863,10 @@ namespace StageManager
 
 			var area = StageArea();
 			if (area.Width <= 0 || area.Height <= 0)
+			{
+				Log.Info("LAYOUT", $"Skipped layout for '{scene.Title}': stage area unknown");
 				return;
+			}
 
 			var windows = scene.Windows.ToArray()
 				.Where(w => !Win32.IsIconic(w.Handle))
@@ -877,9 +894,15 @@ namespace StageManager
 				seen[exe] = seen.TryGetValue(exe, out var c) ? c + 1 : 0;
 
 				int x, y, width, height;
-				if (AppGroups.GetLayout(LayoutKey(scene, w, seen[exe])) is int[] r)
+				var lkey = LayoutKey(scene, w, seen[exe]);
+				if (AppGroups.GetLayout(lkey) is int[] r)
 				{
 					(x, y, width, height) = (r[0], r[1], r[2], r[3]);
+				}
+				else if (n == 1 && !StableTileId(scene).StartsWith("split:", StringComparison.OrdinalIgnoreCase) && AppGroups.GetDefaultStage() is int[] d)
+				{
+					// "Use everywhere": the size and spot the user picked for all single-app tiles.
+					(x, y, width, height) = (d[0], d[1], d[2], d[3]);
 				}
 				else
 				{
@@ -895,6 +918,7 @@ namespace StageManager
 				x = Math.Clamp(x, area.Left, area.Right - width);
 				y = Math.Clamp(y, area.Top, area.Bottom - height);
 
+				Log.Window("LAYOUT", $"Place {lkey} → ({x},{y} {width}x{height})", w);
 				PlaceVisibleRect(w.Handle, x, y, width, height);
 			}
 		}
@@ -977,6 +1001,51 @@ namespace StageManager
 				AppGroups.SaveLayout(key, f.Left, f.Top, f.Right - f.Left, f.Bottom - f.Top);
 				Log.Window("LAYOUT", $"Remembered hand placement {key} = ({f.Left},{f.Top} {f.Right - f.Left}x{f.Bottom - f.Top})", window);
 			}));
+		}
+
+		/// <summary>Visible frame of a window in physical px, or null if it isn't placeable now.</summary>
+		private static Win32.Rect? VisibleFrame(IWindow w)
+		{
+			if (Win32.IsIconic(w.Handle) || Win32.IsZoomed(w.Handle)) return null;
+			if (OpacityWindowStrategy.TryGetOriginalPosition(w.Handle, out _, out _)) return null;
+			return Win32.DwmGetWindowAttribute(w.Handle, (int)Win32.DwmWindowAttribute.DWMWA_EXTENDED_FRAME_BOUNDS, out Win32.Rect f, Marshal.SizeOf<Win32.Rect>()) == 0 ? f : null;
+		}
+
+		/// <summary>
+		/// "Save": remembers exactly where every app on stage sits right now, for this tile.
+		/// Returns how many windows were saved.
+		/// </summary>
+		public int SaveStagePlacement()
+		{
+			var scene = _current;
+			if (scene is null) return 0;
+			int saved = 0;
+			var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+			foreach (var w in scene.Windows.ToArray().Where(w => !Win32.IsIconic(w.Handle))
+				.OrderBy(w => w.ProcessFileName, StringComparer.OrdinalIgnoreCase).ThenBy(w => w.Handle.ToInt64()))
+			{
+				var exe = w.ProcessFileName ?? "";
+				seen[exe] = seen.TryGetValue(exe, out var c) ? c + 1 : 0;
+				if (VisibleFrame(w) is not Win32.Rect f) continue;
+				var key = LayoutKey(scene, w, seen[exe]);
+				AppGroups.SaveLayout(key, f.Left, f.Top, f.Right - f.Left, f.Bottom - f.Top);
+				Log.Window("LAYOUT", $"Saved (button) {key} = ({f.Left},{f.Top} {f.Right - f.Left}x{f.Bottom - f.Top})", w);
+				saved++;
+			}
+			return saved;
+		}
+
+		/// <summary>
+		/// "Use everywhere": the on-stage app's size and spot become the default for every
+		/// single-app tile in every group. Combined tiles keep their side-by-side layout.
+		/// </summary>
+		public bool UseStagePlacementEverywhere()
+		{
+			var w = _current?.Windows.ToArray().FirstOrDefault(x => !Win32.IsIconic(x.Handle));
+			if (w is null || VisibleFrame(w) is not Win32.Rect f) return false;
+			AppGroups.SetDefaultStage(f.Left, f.Top, f.Right - f.Left, f.Bottom - f.Top);
+			Log.Window("LAYOUT", $"Use everywhere = ({f.Left},{f.Top} {f.Right - f.Left}x{f.Bottom - f.Top})", w);
+			return true;
 		}
 
 		public Task MoveWindow(Scene sourceScene, IWindow window, Scene targetScene)

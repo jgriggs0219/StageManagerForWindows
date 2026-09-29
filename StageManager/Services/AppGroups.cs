@@ -22,6 +22,7 @@ namespace StageManager.Services
 			public List<List<string>> Splits { get; set; } = new();
 			public Dictionary<string, int[]> Layouts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 			public Dictionary<string, string> SplitGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+			public int[]? DefaultStage { get; set; }
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -202,6 +203,21 @@ namespace StageManager.Services
 		{
 			var split = GetSplitKey(exe);
 			return split is not null ? GetSplitGroup(split) : GetWindowGroup(hwnd, exe, title);
+		}
+
+		/// <summary>The "Use everywhere" stage rect for single-app tiles, or null.</summary>
+		public static int[]? GetDefaultStage() => _data.DefaultStage is { Length: 4 } d ? d : null;
+
+		/// <summary>
+		/// Makes one rect the spot for every single-app tile and forgets their individual spots
+		/// (combined tiles such as Dialpad + Discord keep theirs).
+		/// </summary>
+		public static void SetDefaultStage(int x, int y, int w, int h)
+		{
+			_data.DefaultStage = new[] { x, y, w, h };
+			foreach (var k in _data.Layouts.Keys.Where(k => !k.StartsWith("split:", StringComparison.OrdinalIgnoreCase)).ToList())
+				_data.Layouts.Remove(k);
+			Persist();
 		}
 
 		public static void Assign(string exe, string group)

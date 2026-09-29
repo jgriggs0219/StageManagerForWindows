@@ -597,9 +597,16 @@ namespace StageManager
 
 		private void UpdateStageAreaCache()
 		{
-			if (_thisHandle == IntPtr.Zero) return;
-			var wa = System.Windows.Forms.Screen.FromHandle(_thisHandle).WorkingArea;
-			int strip = (int)Math.Round(SidebarStripDip * Dpi.X);
+			// _thisHandle is captured in OnInitialized, before the HWND exists, so it is often
+			// zero — which left this cache empty and silently disabled the whole stage layout.
+			// Ask WPF for the real handle; fall back to the primary screen.
+			var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+			var wa = hwnd != IntPtr.Zero
+				? System.Windows.Forms.Screen.FromHandle(hwnd).WorkingArea
+				: (System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea ?? System.Drawing.Rectangle.Empty);
+			if (wa.IsEmpty) return;
+			var dpiX = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+			int strip = (int)Math.Round(SidebarStripDip * dpiX);
 			_stageAreaCache = new System.Drawing.Rectangle(wa.Left + strip, wa.Top, Math.Max(1, wa.Width - strip), wa.Height);
 		}
 
@@ -1076,6 +1083,8 @@ namespace StageManager
 			var activeGroup = _removedCurrentScene?.GroupName ?? "";
 			UpdateStageFrame(activeGroup.Length > 0 ? _removedCurrentScene!.GroupColor : null);
 			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
+			// Custom sorts don't re-sort live: move the group on stage to the top explicitly.
+			if (activeGroup != _lastActiveGroup) { _lastActiveGroup = activeGroup; Dispatcher.BeginInvoke(new Action(() => _groupView?.Refresh())); }
 			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
 			int ungrouped = 0; // grouped apps always show; the recent-apps cap is for ungrouped ones
 
@@ -1703,6 +1712,9 @@ namespace StageManager
 		/// </summary>
 		// Coloured border around the screen for the group on stage (see StageFrameWindow).
 		private StageManager.Controls.StageFrameWindow? _stageFrame;
+		private StageManager.Controls.StageBarWindow? _stageBar;
+		private System.Windows.Data.ListCollectionView? _groupView;
+		private string _lastActiveGroup = "";
 
 		private void UpdateStageFrame(Color? groupColor)
 		{
@@ -1711,6 +1723,21 @@ namespace StageManager
 				_stageFrame ??= new StageManager.Controls.StageFrameWindow();
 				_stageFrame.Fit(GetWorkAreaBounds());
 				_stageFrame.SetGroupColor(groupColor);
+
+				// Top-left bar: group name (or app name when ungrouped) + Save / Use everywhere.
+				if (_stageBar is null)
+				{
+					_stageBar = new StageManager.Controls.StageBarWindow
+					{
+						OnSave = () => SceneManager?.SaveStagePlacement() ?? 0,
+						OnUseEverywhere = () => SceneManager?.UseStagePlacementEverywhere() ?? false,
+					};
+				}
+				var stage = _removedCurrentScene;
+				var name = stage is null ? "" : stage.GroupName.Length > 0 ? stage.GroupName
+					: System.IO.Path.GetFileNameWithoutExtension(stage.ProcessKey ?? "") ;
+				if (name.Length > 0)
+					_stageBar.SetGroup(name, groupColor, GetWorkAreaBounds());
 			}
 			catch (Exception ex) { Log.Info("FRAME", $"Stage frame update failed: {ex.Message}"); }
 		}
@@ -1918,6 +1945,7 @@ namespace StageManager
 		private void SetupAppGroups()
 		{
 			var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(Scenes);
+			_groupView = view;
 			view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription(nameof(SceneModel.GroupName)));
 			// Group order first; inside a group keep the collection's own order, which the
 			// scene-switch code maintains.
@@ -2196,7 +2224,7 @@ namespace StageManager
 
 			menu.Items.Add(Item("Reset to automatic layout", () =>
 			{
-				Services.AppGroups.ClearLayouts(model.Scene.Key);
+				Services.AppGroups.ClearLayouts(SceneManager.StableTileId(model.Scene));
 				SceneManager.ApplyStageLayout(model.Scene);
 			}));
 			menu.Items.Add(Item("Make all apps this size (stacked)", () => StackAllLike(model)));
@@ -2239,7 +2267,7 @@ namespace StageManager
 				return;
 			int w = r.Width, h = r.Height;
 
-			var wa = System.Windows.Forms.Screen.FromHandle(_thisHandle).WorkingArea;
+			var wa = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle).WorkingArea;
 			int sidebar = (int)Math.Round(ActualWidth * Dpi.X);
 			int stageLeft = wa.Left + sidebar;
 			int stageWidth = Math.Max(1, wa.Right - stageLeft);
