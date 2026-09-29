@@ -897,17 +897,36 @@ namespace StageManager
 		/// Positions a window so its VISIBLE frame is exactly the given rect. Windows 10/11 draw
 		/// an invisible resize border around most windows, so SetWindowPos alone leaves gaps.
 		/// </summary>
+		private static readonly Dictionary<IntPtr, (int L, int T, int R, int B)> _frameInsets = new();
+
 		private static void PlaceVisibleRect(IntPtr hwnd, int x, int y, int w, int h)
 		{
-			var outer = new Win32.Rect();
-			Win32.GetWindowRect(hwnd, ref outer);
-			int l = 0, t = 0, rgt = 0, b = 0;
-			if (Win32.DwmGetWindowAttribute(hwnd, (int)Win32.DwmWindowAttribute.DWMWA_EXTENDED_FRAME_BOUNDS, out Win32.Rect frame, Marshal.SizeOf<Win32.Rect>()) == 0)
+			// Invisible-border insets can only be measured while the window is ON screen: for a
+			// window parked past the screen edge DWM reports a clipped frame, and using that made
+			// windows creep up/down a little on every switch. Measure on screen, reuse when parked.
+			var parked = OpacityWindowStrategy.TryGetOriginalPosition(hwnd, out _, out _);
+			if (!parked)
 			{
-				l = frame.Left - outer.Left; t = frame.Top - outer.Top;
-				rgt = outer.Right - frame.Right; b = outer.Bottom - frame.Bottom;
+				var outer = new Win32.Rect();
+				if (Win32.GetWindowRect(hwnd, ref outer) &&
+					Win32.DwmGetWindowAttribute(hwnd, (int)Win32.DwmWindowAttribute.DWMWA_EXTENDED_FRAME_BOUNDS, out Win32.Rect frame, Marshal.SizeOf<Win32.Rect>()) == 0)
+				{
+					var ins = (frame.Left - outer.Left, frame.Top - outer.Top, outer.Right - frame.Right, outer.Bottom - frame.Bottom);
+					// Sanity: real borders are a few pixels; anything else is a bad reading.
+					if (ins.Item1 is >= 0 and <= 40 && ins.Item2 is >= 0 and <= 40 && ins.Item3 is >= 0 and <= 40 && ins.Item4 is >= 0 and <= 40)
+						lock (_frameInsets) _frameInsets[hwnd] = ins;
+				}
 			}
+			(int l, int t, int rgt, int b) = (0, 0, 0, 0);
+			lock (_frameInsets)
+				if (_frameInsets.TryGetValue(hwnd, out var cached))
+					(l, t, rgt, b) = cached;
 			int ox = x - l, oy = y - t, ow = w + l + rgt, oh = h + t + b;
+
+			// Already exactly there: don't touch it (no jitter, no needless repaint).
+			var now = new Win32.Rect();
+			if (!parked && Win32.GetWindowRect(hwnd, ref now) && now.Left == ox && now.Top == oy && now.Width == ow && now.Height == oh)
+				return;
 
 			if (OpacityWindowStrategy.TrySetOriginalPosition(hwnd, ox, oy))
 			{
