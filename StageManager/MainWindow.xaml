@@ -155,6 +155,10 @@
                                             <DataTrigger Binding="{Binding Name}" Value="">
                                                 <Setter Property="Visibility" Value="Collapsed" />
                                             </DataTrigger>
+                                            <!-- The group on stage is already named, large, in the top-left bar. -->
+                                            <DataTrigger Binding="{Binding Items[0].IsActiveGroup}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
