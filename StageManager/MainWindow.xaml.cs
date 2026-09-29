@@ -309,6 +309,19 @@ namespace StageManager
 			return switched;
 		}
 
+		/// <summary>
+		/// Tool-window style makes Windows show the sidebar on EVERY virtual desktop (like the
+		/// icon overlay, stage bar and frame already are). Without it the sidebar stayed on the
+		/// desktop Stage Manager started on, and other desktops showed only floating icons.
+		/// </summary>
+		protected override void OnSourceInitialized(EventArgs e)
+		{
+			base.OnSourceInitialized(e);
+			var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+			var ex = Win32.GetWindowExStyleLongPtr(hwnd);
+			Win32.SetWindowStyleExLongPtr(hwnd, ex | Win32.WS_EX.WS_EX_TOOLWINDOW);
+		}
+
 		protected override void OnInitialized(EventArgs e)
 		{
 			base.OnInitialized(e);
