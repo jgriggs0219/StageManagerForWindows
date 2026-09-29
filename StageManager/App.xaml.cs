@@ -16,6 +16,15 @@ namespace StageManager
 		{
 			base.OnStartup(e);
 
+			// One Stage Manager at a time: two copies fight over every window (both park and
+			// restore). A second launch (user double-click while the watchdog restarts us) just leaves.
+			_singleInstance = new System.Threading.Mutex(true, @"Local\StageManager.SingleInstance", out var isFirst);
+			if (!isFirst && !Array.Exists(e.Args, a => a == "--restore-scenes"))
+			{
+				Environment.Exit(0);
+				return;
+			}
+
 			// Before anything that logs a frame number, so the count covers the whole run.
 			FrameClock.Start();
 
@@ -65,6 +74,8 @@ namespace StageManager
 
 		/// <summary>Started by the Windows startup entry (login), not by the user.</summary>
 		public static bool IsAutostart { get; private set; }
+
+		private static System.Threading.Mutex? _singleInstance;
 
 		private static DateTime _uiErrorWindowStart = DateTime.MinValue;
 		private static int _uiErrorCount;
