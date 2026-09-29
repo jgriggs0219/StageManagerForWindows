@@ -17,7 +17,7 @@ namespace StageManager.Animations
 		// allowed to hide anything real. The first tick covers the overlay's own commit;
 		// the rest are slack for a fresh capture session's first frame. Capped so a window
 		// that never produces one (capture denied, fully occluded) can't stall the switch.
-		private const int MaxReadyFrames = 5;
+		private const int MaxReadyFrames = 2; // was 5: waiting that long before the flight read as a hitch
 
 		private TransitionOverlayWindow? _overlay;
 		private bool _isAnimating;

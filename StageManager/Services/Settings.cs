@@ -7,7 +7,7 @@ namespace StageManager.Services
 	{
 		private const string REG_KEY = @"SOFTWARE\StageManager\Settings";
 
-		public const int DefaultAnimationDurationMs = 380;
+		public const int DefaultAnimationDurationMs = 260;
 		public const int DefaultMaxScenes = 5;
 
 		public static void SetHideDesktopIcons(bool hideIcons) => SetInt("HideDesktopIcons", hideIcons ? 1 : 0);

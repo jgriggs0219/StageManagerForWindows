@@ -63,6 +63,13 @@ namespace StageManager
 		/// participate in Stage Manager scene logic. Currently hard-codes an exception for the Microsoft
 		/// Teams ‘Meeting compact’ floating pop-up.
 		/// </summary>
+		private static readonly HashSet<string> IgnoredProcesses = new(StringComparer.OrdinalIgnoreCase)
+		{
+			"SnippingTool.exe", "ScreenClippingHost.exe", "ScreenSketch.exe",
+			"ShellExperienceHost.exe", "StartMenuExperienceHost.exe", "SearchHost.exe",
+			"TextInputHost.exe", "GameBar.exe", "GameBarFTServer.exe", "PowerToys.PowerLauncher.exe",
+		};
+
 		private bool IsPersistentWindow(IWindow window)
 		{
 			if (window == null)
@@ -72,6 +79,11 @@ namespace StageManager
 			// status pills) float over everything — they are not app windows to stage.
 			if ((Win32.GetWindowExStyleLongPtr(window.Handle) & Win32.WS_EX.WS_EX_TOPMOST) != 0 &&
 				VirtualDesktop.IsUnassigned(window.Handle))
+				return true;
+
+			// System overlays and screenshot tools are never apps to stage: treating Snipping
+			// Tool's capture overlay/toolbar as an app put it on stage and parked everything else.
+			if (IgnoredProcesses.Contains(window.ProcessFileName ?? ""))
 				return true;
 
 			// Quick process check – bail out early if it is definitely not Teams
