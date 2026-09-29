@@ -105,19 +105,26 @@ namespace StageManager.Native
 		}
 
 		/// <summary>Re-reads where windows live (the user can move them in Task View). Dispatcher only.</summary>
-		public static void Refresh(System.Collections.Generic.IEnumerable<IntPtr> handles)
+		/// <returns>True if any window turned out to live on a different desktop than cached.</returns>
+		public static bool Refresh(System.Collections.Generic.IEnumerable<IntPtr> handles)
 		{
 			var m = Manager;
-			if (m is null) return;
+			if (m is null) return false;
+			var moved = false;
 			foreach (var h in handles)
 			{
 				try
 				{
 					if (m.GetWindowDesktopId(h, out var id) == 0 && id != Guid.Empty)
-						lock (_windowDesktop) _windowDesktop[h] = id;
+						lock (_windowDesktop)
+						{
+							if (_windowDesktop.TryGetValue(h, out var old) && old != id) moved = true;
+							_windowDesktop[h] = id;
+						}
 				}
-				catch { _manager = null; return; }
+				catch { _manager = null; return moved; }
 			}
+			return moved;
 		}
 
 		/// <summary>True when the shell reports the window as belonging to no desktop (shown on all).</summary>

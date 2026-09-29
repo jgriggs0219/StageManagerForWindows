@@ -1451,9 +1451,16 @@ namespace StageManager
 				return;
 			}
 
-			// Every ~3 s re-read where windows live (Task View moves) — cheap, dispatcher only.
-			if (++_desktopTick % 12 == 0)
-				VirtualDesktop.Refresh(GetSceneableWindows().ToArray().Select(w => w.Handle));
+			// Every ~1 s re-read where windows live. A window moved to another desktop (Task View)
+			// is re-filed under that desktop's groups and both sidebars update — before, it kept
+			// its old desktop and vanished from both.
+			if (++_desktopTick % 4 == 0 &&
+				VirtualDesktop.Refresh(GetSceneableWindows().ToArray().Select(w => w.Handle)))
+			{
+				Log.Info("VDESK", "Window(s) moved between desktops → re-filing");
+				RegroupWindows(includeStage: true);
+				VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
+			}
 		}
 
 		/// <summary>
