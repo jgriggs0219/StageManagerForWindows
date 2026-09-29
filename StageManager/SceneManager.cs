@@ -429,6 +429,7 @@ namespace StageManager
 		{
 			Log.Window("EVENT", "WindowDestroyed", window);
 			VirtualDesktop.Forget(window.Handle);
+			lock (_mergedWith) _mergedWith.Remove(window.Handle);
 			AppGroups.ForgetWindow(window.Handle);
 			_lastFocusHandoffAt = DateTime.UtcNow;
 
@@ -1109,6 +1110,10 @@ namespace StageManager
 					.ToList();
 				var tileGroup = GroupOfKey(targetScene.Key);
 				AppGroups.RecordSplit(allHere, tileGroup);
+				// Same-app merges can't be a split (per app), so remember this window's tile directly.
+				var mate = targetScene.Windows.FirstOrDefault(w => w.Handle != window.Handle);
+				if (mate is not null)
+					lock (_mergedWith) _mergedWith[window.Handle] = ResolveAnchor(mate.Handle);
 
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Updated));
 				SceneChanged?.Invoke(this, new SceneChangedEventArgs(targetScene, window, ChangeType.Updated));
@@ -1212,6 +1217,11 @@ namespace StageManager
 
 				// Pulled out of a combined tile on purpose: stop remembering it as part of the split
 				// (unless another window of the same app stays behind in that tile).
+				lock (_mergedWith)
+				{
+					_mergedWith.Remove(window.Handle);
+					foreach (var k in _mergedWith.Where(kv => kv.Value == window.Handle).Select(kv => kv.Key).ToList()) _mergedWith.Remove(k);
+				}
 				if (window.ProcessFileName is string exe && !source.Windows.Any(w => string.Equals(w.ProcessFileName, exe, StringComparison.OrdinalIgnoreCase)))
 					AppGroups.RemoveFromSplit(exe);
 
@@ -1563,11 +1573,38 @@ namespace StageManager
 		// its own group gets its own tile; apps the user combined share one again after restart.
 		// Keys also carry the window's virtual desktop: each desktop has its own groups, combos
 		// and saved positions, and a tile never spans desktops.
+		// One tile per WINDOW: opening an app shows just that window. Windows share a tile only
+		// when the user merged them (a remembered split of different apps, or a same-app merge
+		// this session), and owned dialogs/popups stay with their owner window.
 		private string GetWindowGroupKey(IWindow window)
 		{
 			var desk = VirtualDesktop.DesktopOf(window.Handle);
 			using (AppGroups.For(desk))
-				return $"{AppGroups.GetSplitKey(window.ProcessFileName) ?? window.ProcessId.ToString()}#{AppGroups.GetEffectiveGroup(window.Handle, window.ProcessFileName, window.Title)}@{desk:N}";
+			{
+				var group = AppGroups.GetEffectiveGroup(window.Handle, window.ProcessFileName, window.Title);
+				var split = AppGroups.GetSplitKey(window.ProcessFileName);
+				var anchor = split ?? $"w{ResolveAnchor(window.Handle).ToInt64():X}";
+				return $"{anchor}#{group}@{desk:N}";
+			}
+		}
+
+		// Same-app windows the user dragged together (split memory works per app, so it cannot
+		// express "these two Chrome windows"): window → the window it was merged into.
+		private readonly Dictionary<IntPtr, IntPtr> _mergedWith = new();
+
+		private IntPtr ResolveAnchor(IntPtr hwnd)
+		{
+			var h = hwnd;
+			for (int i = 0; i < 8; i++)
+			{
+				var owner = Win32.GetWindow(h, Win32.GW.GW_OWNER);
+				if (owner == IntPtr.Zero || !Win32.IsWindow(owner)) break;
+				h = owner;
+			}
+			lock (_mergedWith)
+				for (int i = 0; i < 8 && _mergedWith.TryGetValue(h, out var into) && Win32.IsWindow(into) && into != h; i++)
+					h = into;
+			return h;
 		}
 
 		public void Dispose()
