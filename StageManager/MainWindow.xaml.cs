@@ -1104,7 +1104,16 @@ namespace StageManager
 			UpdateStageFrame(activeGroup.Length > 0 ? _removedCurrentScene!.GroupColor : null);
 			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
 			// Custom sorts don't re-sort live: move the group on stage to the top explicitly.
-			if (activeGroup != _lastActiveGroup) { _lastActiveGroup = activeGroup; Dispatcher.BeginInvoke(new Action(() => _groupView?.Refresh())); }
+			// Most-recently-used order: a group's recency is when it was last on stage or any of
+			// its apps was last used. Re-sort whenever that order changes.
+			if (activeGroup.Length > 0) _groupLastActive[activeGroup] = DateTime.UtcNow;
+			_groupRecency.Clear();
+			foreach (var m in Scenes.Where(m => !m.IsPlaceholder))
+				if (!_groupRecency.TryGetValue(m.GroupName, out var t) || m.Updated > t) _groupRecency[m.GroupName] = m.Updated;
+			foreach (var kv in _groupLastActive)
+				if (!_groupRecency.TryGetValue(kv.Key, out var t2) || kv.Value > t2) _groupRecency[kv.Key] = kv.Value;
+			var orderSig = string.Join("|", _groupRecency.OrderByDescending(kv => kv.Value).Select(kv => kv.Key)) + "|" + activeGroup;
+			if (orderSig != _lastOrderSig) { _lastOrderSig = orderSig; _lastActiveGroup = activeGroup; Dispatcher.BeginInvoke(new Action(() => _groupView?.Refresh())); }
 			// Only this desktop's apps (and its own groups' headers) belong in the sidebar.
 			foreach (var off in Scenes.ToArray().Where(s => !s.IsPlaceholder && !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
 				off.IsVisible = false;
@@ -1741,6 +1750,9 @@ namespace StageManager
 		private StageManager.Controls.StageBarWindow? _stageBar;
 		private System.Windows.Data.ListCollectionView? _groupView;
 		private string _lastActiveGroup = "";
+		private string _lastOrderSig = "";
+		private readonly Dictionary<string, DateTime> _groupRecency = new();
+		private readonly Dictionary<string, DateTime> _groupLastActive = new();
 
 		private void UpdateStageFrame(Color? groupColor)
 		{
@@ -1986,8 +1998,13 @@ namespace StageManager
 				// The group on stage comes first, then ungrouped, then the rest in the user's order.
 				var act = y.IsActiveGroup.CompareTo(x.IsActiveGroup);
 				if (act != 0) return act;
-				var c = x.GroupOrder.CompareTo(y.GroupOrder);
-				return c != 0 ? c : Scenes.IndexOf(x).CompareTo(Scenes.IndexOf(y));
+				// Then groups by most recent use, and inside a group the most recently used app first.
+				var gx = _groupRecency.TryGetValue(x.GroupName, out var tx) ? tx : DateTime.MinValue;
+				var gy = _groupRecency.TryGetValue(y.GroupName, out var ty) ? ty : DateTime.MinValue;
+				var g = gy.CompareTo(gx);
+				if (g != 0) return g;
+				if (x.IsPlaceholder != y.IsPlaceholder) return x.IsPlaceholder ? 1 : -1;
+				return y.Updated.CompareTo(x.Updated);
 			}) as System.Collections.IComparer;
 			view.IsLiveGrouping = true;
 			view.LiveGroupingProperties.Add(nameof(SceneModel.GroupName));
