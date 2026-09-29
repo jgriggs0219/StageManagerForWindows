@@ -356,7 +356,25 @@ namespace StageManager.Model
 
 		private static long _nextSeq;
 		/// <summary>Creation order — a tile's fixed slot within its group.</summary>
-		public long Seq { get; } = System.Threading.Interlocked.Increment(ref _nextSeq);
+		public long Seq { get; init; } = System.Threading.Interlocked.Increment(ref _nextSeq);
+
+		/// <summary>
+		/// Set on the invisible stand-in that holds an on-stage app's place in the sidebar: same
+		/// windows (so the same size), same group and slot, but hidden. Keeping the space reserved
+		/// means nothing else in the sidebar moves when you switch apps.
+		/// </summary>
+		public SceneModel? SlotOf { get; init; }
+		public bool IsStageSlot => SlotOf is not null;
+
+		public static SceneModel CreateStageSlot(SceneModel real)
+		{
+			var slot = new SceneModel { Id = Guid.NewGuid(), SlotOf = real, Seq = real.Seq };
+			slot.Scene = real.Scene;
+			slot.Windows = real.Windows;
+			slot.IsHiddenButReserved = true;
+			slot.RefreshGroup();
+			return slot;
+		}
 
 		private long _sortKey;
 		/// <summary>

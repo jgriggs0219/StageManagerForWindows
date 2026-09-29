@@ -292,10 +292,15 @@ namespace StageManager
 				Log.Info("TRANSITION", "Starting animation");
 					var incomingTile = FindSceneThumbnail(sceneModel, sceneModel.Windows.FirstOrDefault()?.Handle ?? IntPtr.Zero);
 					var outgoingHandle = outgoingModel?.Windows.FirstOrDefault()?.Handle ?? IntPtr.Zero;
+					// The app leaving the stage flies back into its OWN reserved slot (not the clicked
+					// tile's), since that is where its tile will be — nothing else in the sidebar moves.
+					var outSlot = outgoingModel is null ? null : Scenes.FirstOrDefault(s => s.SlotOf == outgoingModel);
+					var outgoingTarget = outSlot is null ? sidebarSlot : GetSceneThumbnailScreenBounds(outSlot);
+					if (outgoingTarget == Rect.Empty) outgoingTarget = sidebarSlot;
 				await _sceneTransitionAnimator.AnimateSceneTransitionAsync(
 					GetWorkAreaBounds(),
 					sidebarSlot, incomingTarget, sceneModel, incomingTile,
-					outgoingSource, sidebarSlot, outgoingModel, outgoingHandle,
+					outgoingSource, outgoingTarget, outgoingModel, outgoingHandle,
 						dpi, SidebarThumbCornerRadius, HideWhatTheCardsCover, ShowWhatTheCardsUncover);
 				Log.Frame("TRANSITION", "Animation completed");
 			}
@@ -497,7 +502,7 @@ namespace StageManager
 				UpdateLayout();
 
 				_iconOverlay.Enabled = true;
-				var visible = Scenes.Where(s => s.IsVisible).ToList();
+				var visible = Scenes.Where(s => s.IsVisible && !s.IsStageSlot).ToList();
 				// Window is parked at Left=-Width during setup, so PointToScreen would offset
 				// icon coords by -Width. Use TranslatePoint (window-relative) directly — the
 				// final on-screen position is Left=0, so window-relative == screen-relative.
@@ -566,6 +571,14 @@ namespace StageManager
 		{
 			var currentModel = args.Current is null ? null : Scenes.FirstOrDefault(m => m.Id == args.Current.Id);
 			Log.Info("SIDEBAR", $"SelectionChanged: current='{args.Current?.Title ?? "(null)"}' prior='{args.Prior?.Title ?? "(null)"}' removedCurrent='{_removedCurrentScene?.Title ?? "(null)"}' scenes={Scenes.Count}");
+
+			// The app going back to the sidebar replaces its own invisible stand-in; the app
+			// coming on stage leaves one behind. Same size, same slot: nothing else moves.
+			if (_removedCurrentScene is object)
+				foreach (var oldSlot in Scenes.Where(s => s.SlotOf == _removedCurrentScene).ToArray())
+					Scenes.Remove(oldSlot);
+			if (currentModel is object && !Scenes.Any(s => s.SlotOf == currentModel))
+				Scenes.Add(SceneModel.CreateStageSlot(currentModel));
 
 			if (currentModel is object)
 			{
@@ -683,6 +696,8 @@ namespace StageManager
 								_removedCurrentScene = null;
 							else
 								Scenes.Remove(toRemove);
+							foreach (var slot in Scenes.Where(s => s.SlotOf == toRemove).ToArray())
+								Scenes.Remove(slot);
 						}
 						SyncVisibilityByUpdatedTimeStamp();
 						break;
@@ -1468,7 +1483,7 @@ namespace StageManager
 			{
 				// Flush sidebar layout — Remove+Insert during selection invalidates async.
 				UpdateLayout();
-				var visible = Scenes.Where(s => s.IsVisible).ToList();
+				var visible = Scenes.Where(s => s.IsVisible && !s.IsStageSlot).ToList();
 				_iconOverlay.UpdateIcons(visible, s => GetSceneThumbnailScreenBounds(s), GetWorkAreaBounds(), xOffset);
 			});
 		}
@@ -1523,7 +1538,7 @@ namespace StageManager
 				_iconOverlay.Enabled = onScreen;
 				if (onScreen)
 				{
-					var visible = Scenes.Where(s => s.IsVisible).ToList();
+					var visible = Scenes.Where(s => s.IsVisible && !s.IsStageSlot).ToList();
 					_iconOverlay.UpdateIcons(visible, s => GetSceneThumbnailScreenBounds(s), GetWorkAreaBounds());
 					_iconOverlay.BringToFront();
 				}
@@ -1542,7 +1557,7 @@ namespace StageManager
 				Left = 0;
 				UpdateLayout();
 				_iconOverlay.Enabled = true;
-				var visible = Scenes.Where(s => s.IsVisible).ToList();
+				var visible = Scenes.Where(s => s.IsVisible && !s.IsStageSlot).ToList();
 				_iconOverlay.UpdateIcons(visible, s => GetSceneThumbnailScreenBounds(s), GetWorkAreaBounds());
 				_iconOverlay.SlideIn(-Width, duration, easingFunction);
 				Left = -Width;

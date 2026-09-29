@@ -1446,6 +1446,8 @@ namespace StageManager
 				foreach (var s in scenes) s.IsSelected = ReferenceEquals(s, _current);
 
 				Log.Info("VDESK", $"Desktop switched → stage '{_current?.Title ?? "(none)"}'");
+				foreach (var s in scenes)
+					Log.Info("VDESK", $"  scene '{s.Title.Split(Environment.NewLine)[0]}' key={s.Key} windows=[{string.Join(", ", s.Windows.Select(w => $"{w.ProcessFileName}@{VirtualDesktop.DesktopOf(w.Handle).ToString()[..8]}"))}] current={now.ToString()[..8]}");
 				CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
 				VirtualDesktopChanged?.Invoke(this, EventArgs.Empty);
 				return;
