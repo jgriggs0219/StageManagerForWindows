@@ -77,6 +77,13 @@ while ($true) {
   if (-not $p) { break }
   if ((Test-Path $hb) -and ((Get-Date) - (Get-Item $hb).LastWriteTime).TotalSeconds -gt 12) {
     $hung = $true
+    # Snapshot every thread's stack before killing it, so the cause of the freeze is on record.
+    $stack = Join-Path $env:USERPROFILE ".dotnet\tools\dotnet-stack.exe"
+    if (Test-Path $stack) {
+      $out = Join-Path $StateDir ("hang-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".txt")
+      $job = Start-Process -FilePath $stack -ArgumentList "report -p $TargetPid" -RedirectStandardOutput $out -NoNewWindow -PassThru
+      $null = $job.WaitForExit(15000)
+    }
     Stop-Process -Id $TargetPid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
     break
