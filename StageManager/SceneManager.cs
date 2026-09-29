@@ -852,12 +852,18 @@ namespace StageManager
 				return;
 
 			var windows = scene.Windows.ToArray()
-				.Where(w => !Win32.IsIconic(w.Handle) && !Win32.IsZoomed(w.Handle))
+				.Where(w => !Win32.IsIconic(w.Handle))
 				.OrderBy(w => w.ProcessFileName, StringComparer.OrdinalIgnoreCase)
 				.ThenBy(w => w.Handle.ToInt64())
 				.ToArray();
 			if (windows.Length == 0)
 				return;
+
+			// Maximized apps (Chrome, Discord, Dialpad often reopen maximized) get the standard
+			// layout too: un-maximize without activating, then place. Skipping them left them
+			// full-screen over the sidebar and never snapped back after a restart.
+			foreach (var w in windows.Where(w => Win32.IsZoomed(w.Handle)))
+				Win32.ShowWindow(w.Handle, Win32.SW.SW_SHOWNOACTIVATE);
 
 			int n = windows.Length;
 			int innerW = area.Width - 2 * StageMargin, innerH = area.Height - 2 * StageMargin;

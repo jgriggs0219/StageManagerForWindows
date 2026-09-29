@@ -1072,7 +1072,9 @@ namespace StageManager
 		{
 			EnsureGroupPlaceholders();
 			foreach (var m in Scenes) m.RefreshGroup();
+			_removedCurrentScene?.RefreshGroup();
 			var activeGroup = _removedCurrentScene?.GroupName ?? "";
+			UpdateStageFrame(activeGroup.Length > 0 ? _removedCurrentScene!.GroupColor : null);
 			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
 			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
 			int ungrouped = 0; // grouped apps always show; the recent-apps cap is for ungrouped ones
@@ -1699,6 +1701,20 @@ namespace StageManager
 		/// <summary>
 		/// Returns the monitor work area in WPF logical (DPI-independent) units. Used as fallback.
 		/// </summary>
+		// Coloured border around the screen for the group on stage (see StageFrameWindow).
+		private StageManager.Controls.StageFrameWindow? _stageFrame;
+
+		private void UpdateStageFrame(Color? groupColor)
+		{
+			try
+			{
+				_stageFrame ??= new StageManager.Controls.StageFrameWindow();
+				_stageFrame.Fit(GetWorkAreaBounds());
+				_stageFrame.SetGroupColor(groupColor);
+			}
+			catch (Exception ex) { Log.Info("FRAME", $"Stage frame update failed: {ex.Message}"); }
+		}
+
 		private Rect GetWorkAreaBounds()
 		{
 			try
@@ -1908,6 +1924,9 @@ namespace StageManager
 			view.CustomSort = System.Collections.Generic.Comparer<object>.Create((a, b) =>
 			{
 				var x = (SceneModel)a; var y = (SceneModel)b;
+				// The group on stage comes first, then ungrouped, then the rest in the user's order.
+				var act = y.IsActiveGroup.CompareTo(x.IsActiveGroup);
+				if (act != 0) return act;
 				var c = x.GroupOrder.CompareTo(y.GroupOrder);
 				return c != 0 ? c : Scenes.IndexOf(x).CompareTo(Scenes.IndexOf(y));
 			}) as System.Collections.IComparer;
@@ -1915,6 +1934,7 @@ namespace StageManager
 			view.LiveGroupingProperties.Add(nameof(SceneModel.GroupName));
 			view.IsLiveSorting = true;
 			view.LiveSortingProperties.Add(nameof(SceneModel.GroupOrder));
+			view.LiveSortingProperties.Add(nameof(SceneModel.IsActiveGroup));
 
 			Services.AppGroups.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
 			{
@@ -2051,6 +2071,12 @@ namespace StageManager
 				return mi;
 			}
 
+			// What's on stage has no sidebar tile to right-click, so its "split apart" lives here.
+			var stageExes = SceneManager?.CurrentScene?.Windows.Select(w => w.ProcessFileName).Where(x => !string.IsNullOrEmpty(x))
+				.Distinct(StringComparer.OrdinalIgnoreCase).Cast<string>().ToList() ?? new List<string>();
+			if (stageExes.Count > 1)
+				menu.Items.Add(Item("Split apart the apps on stage", () => { foreach (var x in stageExes) Services.AppGroups.RemoveFromSplit(x); }));
+
 			menu.Items.Add(Item("Rename group…", () =>
 			{
 				var name = PromptText("Rename group", "Name (tip: Win + . for emoji)", group);
@@ -2150,6 +2176,21 @@ namespace StageManager
 						foreach (var w in model.Windows.ToArray()) Services.AppGroups.AssignWindow(w.Handle, "");
 						if (split is not null) Services.AppGroups.SetSplitGroup(split, ""); else Services.AppGroups.Unassign(exe);
 					}));
+				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
+			}
+
+			// Combined tile (e.g. Dialpad + Discord): take one app out, or split them all apart.
+			// Forgetting the combo is enough — the regroup that follows gives each app its own tile.
+			var exes = model.Windows.Select(w => w.Window?.ProcessFileName).Where(e => !string.IsNullOrEmpty(e))
+				.Distinct(StringComparer.OrdinalIgnoreCase).Cast<string>().ToList();
+			if (exes.Count > 1)
+			{
+				foreach (var e in exes)
+				{
+					var app = e;
+					menu.Items.Add(Item($"Take {System.IO.Path.GetFileNameWithoutExtension(app)} out of this tile", () => Services.AppGroups.RemoveFromSplit(app)));
+				}
+				menu.Items.Add(Item("Split all apart", () => { foreach (var e in exes) Services.AppGroups.RemoveFromSplit(e); }));
 				menu.Items.Add(sepStyle is not null ? new Separator { Style = sepStyle } : new Separator());
 			}
 
