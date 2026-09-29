@@ -125,7 +125,9 @@
         <conv:IndexToZIndexConverter x:Key="IndexToZIndexConverter" />
     </Window.Resources>
     <StackPanel
-        VerticalAlignment="Center">
+        VerticalAlignment="Center"
+        Margin="0,150,0,20">
+        <!-- Top 150: room for the group bar (name + Save/Everywhere) so tiles never crowd it. -->
         <ItemsControl
             Name="scenesControl"
             HorizontalAlignment="Left"
@@ -147,7 +149,7 @@
                                 Background="Transparent"
                                 Width="190"
                                 HorizontalAlignment="Left"
-                                Padding="0,6,0,12"
+                                Padding="0,2,0,8"
                                 MouseRightButtonUp="GroupHeader_RightClick">
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -168,7 +170,7 @@
                                     <!-- Colour comes from the group (SceneModel.GroupColor, same for
                                          every tile in it); the group on stage gets a filled,
                                          thicker pill and an "on stage" dot. -->
-                                    <Border Height="3" CornerRadius="1.5" Margin="0,2,20,8">
+                                    <Border Height="3" CornerRadius="1.5" Margin="0,2,20,6">
                                         <Border.Background>
                                             <SolidColorBrush Color="{Binding Items[0].GroupColor}" />
                                         </Border.Background>
@@ -232,7 +234,7 @@
             </ItemsControl.GroupStyle>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <Grid Margin="0,0,0,22"
+                    <Grid Margin="0,0,0,14"
                         Visibility="{Binding Visibility}"
                         Style="{StaticResource SceneOpacity}"
                         MouseRightButtonUp="SceneTile_RightClick">

@@ -69,7 +69,7 @@ namespace StageManager.Controls
 			buttons.Children.Add(MakeButton("📐", "Everywhere", "Use this size and spot for every single-app tile (combined tiles keep theirs)", () =>
 			{
 				var ok = OnUseEverywhere?.Invoke() ?? false;
-				Flash(ok ? "Used everywhere ✓" : "Put one app on stage first");
+				Flash(ok ? "Used everywhere ✓" : "Put ONE app on stage first");
 			}));
 
 			var root = new StackPanel { Margin = new Thickness(14, 10, 0, 0) };

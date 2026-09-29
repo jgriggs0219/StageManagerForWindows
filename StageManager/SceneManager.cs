@@ -201,7 +201,8 @@ namespace StageManager
 			}
 			else if (type == WindowUpdateType.MoveEnd)
 			{
-				RememberHandPlacement(window);
+				// Positions are saved only by the 💾 Save button now: auto-saving every move/resize
+				// (including accidental ones and apps resizing themselves) kept baking odd sizes in.
 			}
 			else if (type == WindowUpdateType.MinimizeStart)
 			{
@@ -785,11 +786,15 @@ namespace StageManager
 		/// so a Chrome window moved to its own group splits off into its own tile. The stage
 		/// is left as the user sees it: a window on stage stays on stage.
 		/// </summary>
-		public void RegroupWindows()
+		/// <param name="includeStage">False for the background check: the app on stage is never
+		/// moved or hidden by it — only by something the user did (a menu action).</param>
+		public void RegroupWindows(bool includeStage = true)
 		{
 			foreach (var window in GetSceneableWindows().ToArray())
 			{
 				var source = FindSceneForWindow(window);
+				if (!includeStage && ReferenceEquals(source, _current))
+					continue;
 				if (source is null)
 					continue;
 				var key = GetWindowGroupKey(window);
@@ -894,9 +899,14 @@ namespace StageManager
 			foreach (var w in windows.Where(w => Win32.IsZoomed(w.Handle)))
 				Win32.ShowWindow(w.Handle, Win32.SW.SW_SHOWNOACTIVATE);
 
+			// One column per DIFFERENT app (Dialpad | Discord). Several windows of the same app
+			// share a column and stay full size, stacked — splitting them into half-width columns
+			// made sizes jump whenever a second Chrome window joined or left the tile.
+			var apps = windows.Select(w => w.ProcessFileName ?? "").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 			int n = windows.Length;
+			int cols = apps.Count;
 			int innerW = area.Width - 2 * StageMargin, innerH = area.Height - 2 * StageMargin;
-			int colW = (innerW - (n - 1) * StageGap) / n;
+			int colW = (innerW - (cols - 1) * StageGap) / cols;
 
 			var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 			for (int i = 0; i < n; i++)
@@ -907,18 +917,19 @@ namespace StageManager
 
 				int x, y, width, height;
 				var lkey = LayoutKey(scene, w, seen[exe]);
+				int col = apps.FindIndex(a => string.Equals(a, exe, StringComparison.OrdinalIgnoreCase));
 				if (AppGroups.GetLayout(lkey) is int[] r)
 				{
 					(x, y, width, height) = (r[0], r[1], r[2], r[3]);
 				}
-				else if (n == 1 && !StableTileId(scene).StartsWith("split:", StringComparison.OrdinalIgnoreCase) && AppGroups.GetDefaultStage() is int[] d)
+				else if (cols == 1 && !StableTileId(scene).StartsWith("split:", StringComparison.OrdinalIgnoreCase) && AppGroups.GetDefaultStage() is int[] d)
 				{
 					// "Use everywhere": the size and spot the user picked for all single-app tiles.
 					(x, y, width, height) = (d[0], d[1], d[2], d[3]);
 				}
 				else
 				{
-					x = area.Left + StageMargin + i * (colW + StageGap);
+					x = area.Left + StageMargin + col * (colW + StageGap);
 					y = area.Top + StageMargin;
 					width = colW;
 					height = innerH;
@@ -1053,7 +1064,11 @@ namespace StageManager
 		/// </summary>
 		public bool UseStagePlacementEverywhere()
 		{
-			var w = _current?.Windows.ToArray().FirstOrDefault(x => !Win32.IsIconic(x.Handle));
+			// Only from a single-app tile: from a combined tile (Dialpad | Discord) this copied a
+			// half-width column and made EVERY app half width.
+			if (_current is null || _current.Windows.Select(x => x.ProcessFileName).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1)
+				return false;
+			var w = _current.Windows.ToArray().FirstOrDefault(x => !Win32.IsIconic(x.Handle));
 			if (w is null || VisibleFrame(w) is not Win32.Rect f) return false;
 			AppGroups.SetDefaultStage(f.Left, f.Top, f.Right - f.Left, f.Bottom - f.Top);
 			Log.Window("LAYOUT", $"Use everywhere = ({f.Left},{f.Top} {f.Right - f.Left}x{f.Bottom - f.Top})", w);

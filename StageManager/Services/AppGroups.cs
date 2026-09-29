@@ -177,7 +177,13 @@ namespace StageManager.Services
 					title.Contains(r.Contains, StringComparison.OrdinalIgnoreCase) &&
 					_data.Groups.Contains(r.Group));
 				if (rule is not null)
+				{
+					// A rule decides ONCE: pin the window to that group, so later tab/title
+					// changes never bounce it between groups (it used to flip on every tab switch,
+					// and hiding the stage window mid-flip looked like apps closing).
+					lock (_windowOverrides) _windowOverrides[hwnd] = rule.Group;
 					return rule.Group;
+				}
 			}
 			return GetGroup(exe);
 		}

@@ -22,7 +22,7 @@ namespace StageManager.Controls
         private const double OverlapOffset = -8;
         private const double SmallSceneLeftShift = -8;
         private const double BottomOverlap = 12;
-        private const double SceneBottomMargin = 22;
+        private const double SceneBottomMargin = 14;
         private const int CompactThreshold = 2;
 
         // Filter-view layout (active when HighlightedProcessKey != null).

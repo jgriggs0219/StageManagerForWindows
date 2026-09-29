@@ -100,11 +100,11 @@ namespace StageManager.Model
 		/// aspect is always preserved.
 		/// </summary>
 		private const double BaseCardScale = 0.135693;
-		private const double MinCardHeightDip = 64.0;
+		private const double MinCardHeightDip = 54.0;
 		// Compact sidebar: no card larger than this box (aspect kept), so tiles never run under
 		// the app on stage and grouped sections stay readable.
-		private const double MaxCardWidthDip = 132.0;
-		private const double MaxCardHeightDip = 86.0;
+		private const double MaxCardWidthDip = 112.0;
+		private const double MaxCardHeightDip = 70.0;
 		// Same perspective distance the tilt law uses: d = 1379 on a 1169 pt
 		// screen, scaled with monitor height.
 		private const double EdgePerspectiveDistanceRatio = 1379.0 / 1169.0;

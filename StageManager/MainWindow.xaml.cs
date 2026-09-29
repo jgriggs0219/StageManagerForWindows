@@ -1974,6 +1974,9 @@ namespace StageManager
 		{
 			var view = (System.Windows.Data.ListCollectionView)System.Windows.Data.CollectionViewSource.GetDefaultView(Scenes);
 			_groupView = view;
+			// Apps on other desktops are left out of the list entirely — otherwise their groups'
+			// headers still drew on this desktop even with every tile hidden.
+			view.Filter = o => o is SceneModel s && (s.IsPlaceholder || SceneManager is null || s.Scene is null || SceneManager.IsSceneOnCurrentDesktop(s.Scene));
 			view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription(nameof(SceneModel.GroupName)));
 			// Group order first; inside a group keep the collection's own order, which the
 			// scene-switch code maintains.
@@ -2008,7 +2011,7 @@ namespace StageManager
 			{
 				if (SceneManager is null || _sceneTransitionAnimator.IsAnimating || IsSidebarDragging || Services.AppGroups.Rules.Count == 0)
 					return;
-				SceneManager.RegroupWindows();
+				SceneManager.RegroupWindows(includeStage: false);
 			};
 			regroupTimer.Start();
 
