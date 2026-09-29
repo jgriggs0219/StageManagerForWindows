@@ -391,10 +391,13 @@ namespace StageManager.Services
 
 		public static void Move(string name, int delta)
 		{
-			var i = _data.Groups.IndexOf(name);
+			// Pinned groups move within the pins (so pins go in the order you want); others
+			// move within the rest of the groups.
+			var list = _data.Pinned.Contains(name) ? _data.Pinned : _data.Groups;
+			var i = list.IndexOf(name);
 			var j = i + delta;
-			if (i < 0 || j < 0 || j >= _data.Groups.Count) return;
-			(_data.Groups[i], _data.Groups[j]) = (_data.Groups[j], _data.Groups[i]);
+			if (i < 0 || j < 0 || j >= list.Count) return;
+			(list[i], list[j]) = (list[j], list[i]);
 			Save();
 		}
 

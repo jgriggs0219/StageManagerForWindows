@@ -354,6 +354,10 @@ namespace StageManager.Model
 
 		public Color GroupColor => GroupOrder <= 0 ? Colors.Transparent : GroupPalette[(GroupOrder - 1) % GroupPalette.Length];
 
+		private static long _nextSeq;
+		/// <summary>Creation order — a tile's fixed slot within its group.</summary>
+		public long Seq { get; } = System.Threading.Interlocked.Increment(ref _nextSeq);
+
 		private long _sortKey;
 		/// <summary>
 		/// Sidebar position (group rank × 10000 + rank inside the group), set by MainWindow.

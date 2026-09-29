@@ -1123,7 +1123,9 @@ namespace StageManager
 			{
 				long rank = groupOrder.IndexOf(grp.Key);
 				int i = 0;
-				foreach (var m in grp.OrderBy(m => m.IsPlaceholder).ThenByDescending(m => m.Updated))
+				// Fixed slots: every tile keeps its place (moving a tile restarts its live preview,
+				// which is the blink). The app you leave goes back into its own slot.
+				foreach (var m in grp.OrderBy(m => m.IsPlaceholder).ThenBy(m => m.Seq))
 				{
 					m.SortKey = rank * 10000 + (m.IsPlaceholder ? 9999 : i++);
 					m.IsPinnedGroup = pinned.Contains(m.GroupName);
