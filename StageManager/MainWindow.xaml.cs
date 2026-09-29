@@ -1103,7 +1103,6 @@ namespace StageManager
 			var activeGroup = _removedCurrentScene?.GroupName ?? "";
 			UpdateStageFrame(activeGroup.Length > 0 ? _removedCurrentScene!.GroupColor : null);
 			foreach (var m in Scenes) m.IsActiveGroup = activeGroup.Length > 0 && m.GroupName == activeGroup;
-			// Custom sorts don't re-sort live: move the group on stage to the top explicitly.
 			// Most-recently-used order: a group's recency is when it was last on stage or any of
 			// its apps was last used. Re-sort whenever that order changes.
 			if (activeGroup.Length > 0) _groupLastActive[activeGroup] = DateTime.UtcNow;
@@ -1112,7 +1111,25 @@ namespace StageManager
 				if (!_groupRecency.TryGetValue(m.GroupName, out var t) || m.Updated > t) _groupRecency[m.GroupName] = m.Updated;
 			foreach (var kv in _groupLastActive)
 				if (!_groupRecency.TryGetValue(kv.Key, out var t2) || kv.Value > t2) _groupRecency[kv.Key] = kv.Value;
-			var orderSig = string.Join("|", _groupRecency.OrderByDescending(kv => kv.Value).Select(kv => kv.Key)) + "|" + activeGroup;
+			// Group order: pinned (in pin order), then the group on stage, then by recent use.
+			var pinned = Services.AppGroups.Pinned;
+			var groupOrder = pinned.Where(g => Scenes.Any(m => m.GroupName == g)).ToList();
+			if (activeGroup.Length > 0 && !groupOrder.Contains(activeGroup)) groupOrder.Add(activeGroup);
+			groupOrder.AddRange(_groupRecency.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).Where(g => !groupOrder.Contains(g)));
+			groupOrder.AddRange(Scenes.Select(m => m.GroupName).Distinct().Where(g => !groupOrder.Contains(g)));
+			foreach (var grp in Scenes.GroupBy(m => m.GroupName))
+			{
+				long rank = groupOrder.IndexOf(grp.Key);
+				int i = 0;
+				foreach (var m in grp.OrderBy(m => m.IsPlaceholder).ThenByDescending(m => m.Updated))
+				{
+					m.SortKey = rank * 10000 + (m.IsPlaceholder ? 9999 : i++);
+					m.IsPinnedGroup = pinned.Contains(m.GroupName);
+				}
+			}
+			// Tiles inside a group re-order in place (live sorting, no blink). Groups themselves only
+			// re-order with a rebuild, so that happens only when the ORDER OF GROUPS changed.
+			var orderSig = string.Join("|", groupOrder);
 			if (orderSig != _lastOrderSig) { _lastOrderSig = orderSig; _lastActiveGroup = activeGroup; Dispatcher.BeginInvoke(new Action(() => _groupView?.Refresh())); }
 			// Only this desktop's apps (and its own groups' headers) belong in the sidebar.
 			foreach (var off in Scenes.ToArray().Where(s => !s.IsPlaceholder && !SceneManager.IsSceneOnCurrentDesktop(s.Scene)))
@@ -1990,27 +2007,14 @@ namespace StageManager
 			// headers still drew on this desktop even with every tile hidden.
 			view.Filter = o => o is SceneModel s && (s.IsPlaceholder || SceneManager is null || s.Scene is null || SceneManager.IsSceneOnCurrentDesktop(s.Scene));
 			view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription(nameof(SceneModel.GroupName)));
-			// Group order first; inside a group keep the collection's own order, which the
-			// scene-switch code maintains.
-			view.CustomSort = System.Collections.Generic.Comparer<object>.Create((a, b) =>
-			{
-				var x = (SceneModel)a; var y = (SceneModel)b;
-				// The group on stage comes first, then ungrouped, then the rest in the user's order.
-				var act = y.IsActiveGroup.CompareTo(x.IsActiveGroup);
-				if (act != 0) return act;
-				// Then groups by most recent use, and inside a group the most recently used app first.
-				var gx = _groupRecency.TryGetValue(x.GroupName, out var tx) ? tx : DateTime.MinValue;
-				var gy = _groupRecency.TryGetValue(y.GroupName, out var ty) ? ty : DateTime.MinValue;
-				var g = gy.CompareTo(gx);
-				if (g != 0) return g;
-				if (x.IsPlaceholder != y.IsPlaceholder) return x.IsPlaceholder ? 1 : -1;
-				return y.Updated.CompareTo(x.Updated);
-			}) as System.Collections.IComparer;
+			// Order comes from SceneModel.SortKey (computed in SyncVisibilityByUpdatedTimeStamp):
+			// pinned groups, then the group on stage, then groups by recent use; inside a group,
+			// the most recently used app first. Live sorting moves only tiles whose key changed.
+			view.SortDescriptions.Add(new System.ComponentModel.SortDescription(nameof(SceneModel.SortKey), System.ComponentModel.ListSortDirection.Ascending));
 			view.IsLiveGrouping = true;
 			view.LiveGroupingProperties.Add(nameof(SceneModel.GroupName));
 			view.IsLiveSorting = true;
-			view.LiveSortingProperties.Add(nameof(SceneModel.GroupOrder));
-			view.LiveSortingProperties.Add(nameof(SceneModel.IsActiveGroup));
+			view.LiveSortingProperties.Add(nameof(SceneModel.SortKey));
 
 			Services.AppGroups.Changed += () => Dispatcher.BeginInvoke(new Action(() =>
 			{
@@ -2153,6 +2157,7 @@ namespace StageManager
 			if (stageExes.Count > 1)
 				menu.Items.Add(Item("Split apart the apps on stage", () => { foreach (var x in stageExes) Services.AppGroups.RemoveFromSplit(x); }));
 
+			menu.Items.Add(Item(Services.AppGroups.IsPinned(group) ? "Unpin" : "📌 Pin to top", () => Services.AppGroups.TogglePin(group)));
 			menu.Items.Add(Item("Rename group…", () =>
 			{
 				var name = PromptText("Rename group", "Name (tip: Win + . for emoji)", group);

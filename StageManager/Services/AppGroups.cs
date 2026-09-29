@@ -23,6 +23,7 @@ namespace StageManager.Services
 			public Dictionary<string, int[]> Layouts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 			public Dictionary<string, string> SplitGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 			public int[]? DefaultStage { get; set; }
+			public List<string> Pinned { get; set; } = new();
 		}
 
 		private static readonly string FilePath = Path.Combine(
@@ -100,6 +101,7 @@ namespace StageManager.Services
 			d.Splits ??= new();
 			d.Layouts = new Dictionary<string, int[]>(d.Layouts ?? new(), StringComparer.OrdinalIgnoreCase);
 			d.SplitGroups = new Dictionary<string, string>(d.SplitGroups ?? new(), StringComparer.OrdinalIgnoreCase);
+			d.Pinned ??= new();
 			return d;
 		}
 
@@ -325,6 +327,17 @@ namespace StageManager.Services
 			Persist();
 		}
 
+		/// <summary>Pinned groups, in pin order: always at the top of this desktop's sidebar.</summary>
+		public static IReadOnlyList<string> Pinned => _data.Pinned;
+
+		public static bool IsPinned(string group) => _data.Pinned.Contains(group);
+
+		public static void TogglePin(string group)
+		{
+			if (!_data.Pinned.Remove(group)) _data.Pinned.Add(group);
+			Save();
+		}
+
 		public static void Assign(string exe, string group)
 		{
 			if (!_data.Groups.Contains(group)) _data.Groups.Add(group);
@@ -355,6 +368,7 @@ namespace StageManager.Services
 			foreach (var app in _data.Apps.Where(kv => kv.Value == oldName).Select(kv => kv.Key).ToList())
 				_data.Apps[app] = newName;
 			foreach (var r in _data.Rules.Where(r => r.Group == oldName)) r.Group = newName;
+			var pi = _data.Pinned.IndexOf(oldName); if (pi >= 0) _data.Pinned[pi] = newName;
 			lock (_windowOverrides)
 				foreach (var h in _windowOverrides.Where(kv => kv.Value == oldName).Select(kv => kv.Key).ToList())
 					_windowOverrides[h] = newName;
@@ -368,6 +382,7 @@ namespace StageManager.Services
 			foreach (var app in _data.Apps.Where(kv => kv.Value == name).Select(kv => kv.Key).ToList())
 				_data.Apps.Remove(app);
 			_data.Rules.RemoveAll(r => r.Group == name);
+			_data.Pinned.Remove(name);
 			lock (_windowOverrides)
 				foreach (var h in _windowOverrides.Where(kv => kv.Value == name).Select(kv => kv.Key).ToList())
 					_windowOverrides.Remove(h);

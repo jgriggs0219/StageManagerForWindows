@@ -354,6 +354,26 @@ namespace StageManager.Model
 
 		public Color GroupColor => GroupOrder <= 0 ? Colors.Transparent : GroupPalette[(GroupOrder - 1) % GroupPalette.Length];
 
+		private long _sortKey;
+		/// <summary>
+		/// Sidebar position (group rank × 10000 + rank inside the group), set by MainWindow.
+		/// Live sorting on it moves only the tiles whose position changed, instead of rebuilding
+		/// the list — rebuilding restarted every live preview, which blinked the whole sidebar.
+		/// </summary>
+		public long SortKey
+		{
+			get => _sortKey;
+			set { if (_sortKey != value) { _sortKey = value; RaisePropertyChanged(); } }
+		}
+
+		private bool _isPinnedGroup;
+		/// <summary>This tile's group is pinned (📌 shown on its header).</summary>
+		public bool IsPinnedGroup
+		{
+			get => _isPinnedGroup;
+			set { if (_isPinnedGroup != value) { _isPinnedGroup = value; RaisePropertyChanged(); } }
+		}
+
 		private bool _isActiveGroup;
 		/// <summary>True when the app on stage belongs to this tile's group; the header lights up.</summary>
 		public bool IsActiveGroup

@@ -208,6 +208,19 @@
                                                 FontWeight="SemiBold"
                                                 TextTrimming="CharacterEllipsis"
                                                 MaxWidth="130" />
+                                            <!-- 📌 on pinned groups -->
+                                            <emoji:TextBlock Text="📌" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center">
+                                                <emoji:TextBlock.Style>
+                                                    <Style TargetType="emoji:TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Items[0].IsPinnedGroup}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </emoji:TextBlock.Style>
+                                            </emoji:TextBlock>
                                             <Ellipse Width="7" Height="7" Margin="7,0,0,0" VerticalAlignment="Center"
                                                      ToolTip="On stage">
                                                 <Ellipse.Fill>
