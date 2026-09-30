@@ -25,6 +25,18 @@ namespace StageManager
 				return;
 			}
 
+			// Started at login: Windows runs startup apps before the taskbar, desktop and DWM are
+			// fully up. Starting that early left Stage Manager half-initialised (no log, no
+			// watchdog, one stray tile). Wait for the shell, then give it a few more seconds.
+			if (Array.IndexOf(e.Args, "--autostart") >= 0)
+			{
+				var deadline = DateTime.UtcNow.AddSeconds(90);
+				while (DateTime.UtcNow < deadline &&
+					(FindWindow("Shell_TrayWnd", null) == IntPtr.Zero || FindWindow("Progman", null) == IntPtr.Zero))
+					System.Threading.Thread.Sleep(500);
+				System.Threading.Thread.Sleep(TimeSpan.FromSeconds(10));
+			}
+
 			// Before anything that logs a frame number, so the count covers the whole run.
 			FrameClock.Start();
 
@@ -76,6 +88,9 @@ namespace StageManager
 		public static bool IsAutostart { get; private set; }
 
 		private static System.Threading.Mutex? _singleInstance;
+
+		[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+		private static extern IntPtr FindWindow(string? className, string? windowName);
 
 		private static DateTime _uiErrorWindowStart = DateTime.MinValue;
 		private static int _uiErrorCount;
