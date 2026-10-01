@@ -25,6 +25,21 @@ namespace StageManager
 				return;
 			}
 
+			// We hold the single-instance mutex, so any OTHER StageManager.exe still running is an
+			// old build from before the guard existed (leftover test folders). Two copies fight
+			// over every window, so close it; our startup then rescues the windows it had parked.
+			try
+			{
+				var me = Environment.ProcessId;
+				foreach (var other in System.Diagnostics.Process.GetProcessesByName("StageManager"))
+				{
+					if (other.Id == me) continue;
+					try { other.Kill(); other.WaitForExit(3000); }
+					catch { /* already gone, or not ours to close */ }
+				}
+			}
+			catch { }
+
 			// Started at login: Windows runs startup apps before the taskbar, desktop and DWM are
 			// fully up. Starting that early left Stage Manager half-initialised (no log, no
 			// watchdog, one stray tile). Wait for the shell, then give it a few more seconds.
