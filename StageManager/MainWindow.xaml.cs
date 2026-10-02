@@ -2050,6 +2050,8 @@ namespace StageManager
 			var regroupTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
 			regroupTimer.Tick += (_, _) =>
 			{
+				// Started without groups although the file has some (bad read at launch): load them now.
+				Services.AppGroups.ReloadIfEmpty();
 				if (SceneManager is null || _sceneTransitionAnimator.IsAnimating || IsSidebarDragging || Services.AppGroups.Rules.Count == 0)
 					return;
 				SceneManager.RegroupWindows(includeStage: false);

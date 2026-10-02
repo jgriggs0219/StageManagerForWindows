@@ -38,7 +38,8 @@ namespace StageManager.Services
 			public Data? Legacy { get; set; }
 		}
 
-		private static readonly Root _root = LoadRoot();
+		private static readonly object _sync = new();
+		private static Root _root = LoadRoot();
 
 		// Which desktop's set the calls on this thread use; null = the current desktop.
 		[ThreadStatic] private static string? _ctx;
@@ -48,7 +49,7 @@ namespace StageManager.Services
 			get
 			{
 				var k = _ctx ?? Native.VirtualDesktop.CurrentDesktopId.ToString();
-				lock (_root)
+				lock (_sync)
 				{
 					if (!_root.Desktops.TryGetValue(k, out var d))
 						_root.Desktops[k] = d = new Data();
@@ -82,7 +83,7 @@ namespace StageManager.Services
 		public static void AdoptLegacy(Guid desktop)
 		{
 			if (_root.Legacy is null || desktop == Guid.Empty) return;
-			lock (_root)
+			lock (_sync)
 			{
 				var k = desktop.ToString();
 				if (!_root.Desktops.TryGetValue(k, out var existing) || existing.Groups.Count == 0)
@@ -105,29 +106,75 @@ namespace StageManager.Services
 			return d;
 		}
 
+		// False when the file existed but could not be read/parsed: then nothing is written back,
+		// so a bad start can never replace the user's saved groups with an empty set.
+		private static bool _loadOk;
+
 		private static Root LoadRoot()
 		{
 			try
 			{
-				if (File.Exists(FilePath))
+				if (!File.Exists(FilePath))
 				{
-					var text = File.ReadAllText(FilePath);
-					using var doc = JsonDocument.Parse(text);
-					if (doc.RootElement.TryGetProperty("Desktops", out _))
-					{
-						var r = JsonSerializer.Deserialize<Root>(text) ?? new Root();
-						r.Desktops = new Dictionary<string, Data>(
-							(r.Desktops ?? new()).ToDictionary(kv => kv.Key, kv => Normalize(kv.Value)), StringComparer.OrdinalIgnoreCase);
-						if (r.Legacy is not null) Normalize(r.Legacy);
-						return r;
-					}
+					_loadOk = true;
+					Log.Info("GROUPS", $"No groups file yet at {FilePath}");
+					return new Root();
+				}
+
+				var text = File.ReadAllText(FilePath);
+				using var doc = JsonDocument.Parse(text);
+				Root r;
+				if (doc.RootElement.TryGetProperty("Desktops", out _))
+				{
+					r = JsonSerializer.Deserialize<Root>(text) ?? new Root();
+					r.Desktops = new Dictionary<string, Data>(
+						(r.Desktops ?? new()).ToDictionary(kv => kv.Key, kv => Normalize(kv.Value)), StringComparer.OrdinalIgnoreCase);
+					if (r.Legacy is not null) Normalize(r.Legacy);
+				}
+				else
+				{
 					// Old single-set file: keep it aside until a desktop adopts it.
 					var legacy = JsonSerializer.Deserialize<Data>(text);
-					return new Root { Legacy = legacy is null ? null : Normalize(legacy) };
+					r = new Root { Legacy = legacy is null ? null : Normalize(legacy) };
 				}
+				_loadOk = true;
+				Log.Info("GROUPS", $"Loaded {text.Length} chars: " + string.Join("; ", r.Desktops.Select(kv => $"{kv.Key[..8]}={kv.Value.Groups.Count} groups/{kv.Value.Apps.Count} apps")));
+				return r;
 			}
-			catch (Exception ex) { Log.Info("GROUPS", $"Load failed, starting empty: {ex.Message}"); }
-			return new Root();
+			catch (Exception ex)
+			{
+				_loadOk = false;
+				Log.Info("GROUPS", $"Load FAILED ({ex.GetType().Name}: {ex.Message}) — running without groups, saving disabled until a reload succeeds");
+				return new Root();
+			}
+		}
+
+		private static int _reloadTries;
+
+		private static bool HasAnyGroups(Root r) => r.Desktops.Values.Any(d => d.Groups.Count > 0);
+
+		/// <summary>
+		/// Self-heal: if we are running with no groups while the file on disk clearly has some
+		/// (a failed or empty read at startup), read it again. Cheap enough to call every couple
+		/// of seconds; raises Changed when groups come back. UI thread.
+		/// </summary>
+		public static void ReloadIfEmpty()
+		{
+			if (_loadOk && HasAnyGroups(_root)) return;
+			// A user with genuinely no groups must not re-read the file forever.
+			if (_reloadTries >= 5) return;
+			_reloadTries++;
+			try
+			{
+				if (!File.Exists(FilePath) || new FileInfo(FilePath).Length < 80) return;
+			}
+			catch { return; }
+
+			var fresh = LoadRoot();
+			if (!_loadOk || !HasAnyGroups(fresh)) return;
+			lock (_sync) _root = fresh;
+			Log.Info("GROUPS", "Groups were missing in memory — reloaded from disk");
+			Changed?.Invoke();
 		}
 
 
@@ -412,7 +459,18 @@ namespace StageManager.Services
 		{
 			try
 			{
+				if (!_loadOk)
+				{
+					Log.Info("GROUPS", "Save skipped: the groups file was not loaded successfully (protecting saved groups)");
+					return;
+				}
 				Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+				// About to write a set with no groups over a file that has content: keep a copy first.
+				if (!HasAnyGroups(_root) && File.Exists(FilePath) && new FileInfo(FilePath).Length > 200)
+				{
+					File.Copy(FilePath, FilePath + ".bak-before-empty", overwrite: true);
+					Log.Info("GROUPS", "Saving a set with no groups — previous file copied to groups.json.bak-before-empty");
+				}
 				File.WriteAllText(FilePath, JsonSerializer.Serialize(_root, new JsonSerializerOptions { WriteIndented = true }));
 			}
 			catch (Exception ex) { Log.Info("GROUPS", $"Save failed: {ex.Message}"); }
